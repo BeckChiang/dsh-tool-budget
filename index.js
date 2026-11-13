@@ -125,7 +125,11 @@ export function apply(ctx, config) {
   const stateDir = settings.stateDir ? String(settings.stateDir) : path.join(os.homedir(), '.dsh-tool-budget')
   const store = new BudgetStore({ dir: stateDir })
   const usageIndex = new UsageIndex({ cacheFile: path.join(stateDir, 'usage-cache.json') })
-  const learner = new Learner({ file: path.join(stateDir, 'learning.json'), groupOf: (toolName) => groupOf(toolName).id })
+  const learner = new Learner({
+    file: path.join(stateDir, 'learning.json'),
+    groupOf: (toolName) => groupOf(toolName).id,
+    labelOf: (groupId) => CORE_GROUPS.find((item) => item.id === groupId)?.label ?? groupId,
+  })
   setLocale(store.preferences().locale)
 
   const warn = (message, cause) => {
@@ -503,14 +507,17 @@ export function apply(ctx, config) {
     }
     const context = contextOf(sessionId)
     const settings = normalizeSettings(store.preferences().cost)
+    const mode = store.modeOf(sessionId)
+    const overheadTokens = mode === 'auto' ? settings.modeAutoOverhead : settings.modeQuietOverhead
     const result = estimate({
       hiddenChars,
       contextTokens: context.contextTokens,
       toolBlockTokens: Math.round(toolBlockChars / settings.charsPerToken),
       avgTurnTokens: context.avgTurnTokens,
+      overheadTokens,
       settings,
     })
-    return { ...result, estimated: context.estimated, contextTokens: context.contextTokens, avgTurnTokens: context.avgTurnTokens }
+    return { ...result, mode, estimated: context.estimated, contextTokens: context.contextTokens, avgTurnTokens: context.avgTurnTokens }
   }
 
   // --- 面板状态 -----------------------------------------------------------
@@ -574,6 +581,51 @@ export function apply(ctx, config) {
     for (const group of orderedGroups) group.tools.sort((left, right) => left.label.localeCompare(right.label))
     const orderedPlugins = [...plugins.values()].sort((left, right) => right.tools.length - left.tools.length || left.label.localeCompare(right.label))
 
+    const groupLabels = new Map(orderedGroups.map((group) => [group.id, group.label]))
+    const expandPlan = (plan) => {
+      const groupSet = new Set(plan.groups ?? [])
+      const pluginSet = new Set(plan.plugins ?? [])
+      for (const packId of plan.packs ?? []) {
+        const pack = packs.find((item) => item.id === packId)
+        if (pack === undefined) continue
+        for (const group of pack.groups ?? []) groupSet.add(group)
+        for (const plugin of pack.plugins ?? []) pluginSet.add(plugin)
+      }
+      return { groups: [...groupSet], plugins: [...pluginSet] }
+    }
+    const impactOf = (resolved) => {
+      const groupSet = new Set(resolved.groups)
+      const pluginSet = new Set(resolved.plugins)
+      const keepAll = groupSet.has('*')
+      let kept = 0
+      let off = 0
+      for (const tool of catalog.tools) {
+        if (keepAll || groupSet.has(tool.group) || pluginSet.has(tool.plugin)) kept += 1
+        else off += 1
+      }
+      return { kept, off }
+    }
+    const labelList = (resolved) => resolved.groups.filter((group) => group !== '*').map((group) => groupLabels.get(group) ?? group)
+    const rawSuggestions = suggestions({ catalog: catalog.tools, usage: usage?.usage, levels })
+    const decorate = (item) => ({ ...item, label: groupLabels.get(item.group) ?? item.group })
+    const plans = [
+      ...store.profiles().map((profile) => {
+        const resolved = expandPlan(profile)
+        return { ...profile, kind: 'profile', active: profile.id === (session.profileId ?? 'full'), impact: impactOf(resolved), keptLabels: labelList(resolved) }
+      }),
+      ...packs.map((pack) => {
+        const resolved = expandPlan(pack)
+        return {
+          ...pack,
+          kind: pack.kind === 'learned' ? 'learned' : pack.kind === 'manual' ? 'manual' : 'pack',
+          active: activePacks.includes(pack.id),
+          chosen: (session.packs ?? []).includes(pack.id),
+          impact: impactOf(resolved),
+          keptLabels: labelList(resolved),
+        }
+      }),
+    ]
+
     const mode = store.modeOf(sessionId)
     return {
       ok: true,
@@ -589,7 +641,8 @@ export function apply(ctx, config) {
       packs: packs.map((pack) => ({ ...pack, active: activePacks.includes(pack.id), chosen: (session.packs ?? []).includes(pack.id) })),
       sessionState: { profileId: session.profileId ?? 'full', packs: session.packs ?? [], groupLevels: session.groupLevels ?? {}, pluginLevels: session.pluginLevels ?? {} },
       levels: Object.fromEntries(levels),
-      suggestions: suggestions({ catalog: catalog.tools, usage: usage?.usage, levels }),
+      plans,
+      suggestions: { sleep: rawSuggestions.sleep.map(decorate), wake: rawSuggestions.wake.map(decorate) },
       usageReady: usage !== null,
       learning: learner.status(),
       cost: costFor(sessionId, catalog, levels),

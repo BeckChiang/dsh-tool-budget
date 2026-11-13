@@ -112,15 +112,21 @@ const base = {
   plugins: [{ id: 'core', label: 'core', kind: 'core', tools: 1, counts: { normal: 1, warn: 0, hidden: 0 } }],
   profiles: [{ id: 'full', kind: 'builtin', name: '全开', active: true }],
   packs: [{ id: 'everything', kind: 'builtin', name: '全开', groups: ['*'], plugins: [], active: true, chosen: true }],
+  plans: [
+    { id: 'everything', kind: 'pack', groups: ['*'], plugins: [], active: true, chosen: true, impact: { kept: 3, off: 0 }, keptLabels: [] },
+    { id: 'core', kind: 'profile', packs: ['everything'], active: false, impact: { kept: 3, off: 0 }, keptLabels: [] },
+  ],
   sessionState: { profileId: 'full', packs: ['everything'] },
   levels: { read: 'normal', ops_bash: 'hidden', never_used: 'hidden' },
-  suggestions: { sleep: [], wake: [] },
+  suggestions: { sleep: [{ group: 'web', kind: 'sleep', label: '网页', tools: 2, calls: 0 }], wake: [] },
   usageReady: true,
   learning: { status: 'idle', packs: [] },
   cost: {
     savedTokens: 120,
     repayTokens: 340,
     breakevenTurns: 2,
+    overheadTokens: 20,
+    netPerTurnTokens: 100,
     thresholdTokens: 900,
     overThreshold: false,
     settings: { charsPerToken: 3.6, missFactor: 1, thresholdMultiplier: 2, priceInput: 2 },
@@ -187,6 +193,29 @@ assert.ok(dialog !== null, '点开后面板应该在')
 const text = () => dom.window.document.querySelector('[role="dialog"]')?.textContent ?? ''
 assert.ok(text().includes('工具预算'), `面板标题应为中文，实际：${text().slice(0, 60)}`)
 assert.ok(text().includes('未用 2'), '工具栏应显示未用数量 2')
+
+// 分区顺序：成本 → 建议 → 模式 → 方案
+const orderedText = text().replace(/\s+/g, '')
+const positionOf = (needle) => orderedText.indexOf(needle)
+assert.ok(positionOf('成本估算') >= 0 && positionOf('成本估算') < positionOf('建议'), '成本应排在建议之前')
+assert.ok(positionOf('建议') < positionOf('模式auto'), '建议应排在模式之前')
+assert.ok(positionOf('模式auto') < positionOf('方案'), '模式应排在方案之前')
+assert.ok(orderedText.includes('+100token/轮'), `成本应显示净省数字，实际：${orderedText.slice(0, 80)}`)
+assert.ok(orderedText.includes('模式常驻20'), '成本应显示模式常驻开销')
+
+// 模式：名字加粗 + 每个模式一行说明
+const modeLabels = [...dom.window.document.querySelectorAll('[role="dialog"] span')].filter((node) => ['auto', 'ask', 'pin'].includes(node.textContent) && node.style.fontWeight === '700')
+assert.ok(modeLabels.length >= 3, '三个模式的名字都该加粗')
+assert.ok(orderedText.includes('工具关多了它会把需要的组再打开'), '模式说明应逐条显示')
+assert.ok(orderedText.includes('近30天一次都没调用'), '建议应说明理由')
+
+// 建议逐条给按钮
+const suggestionRow = [...dom.window.document.querySelectorAll('[role="dialog"] div')].find((node) => node.textContent.includes('网页') && node.textContent.includes('休眠'))
+assert.ok(suggestionRow !== undefined, '建议应逐条列出组名并给操作按钮')
+
+// 排序固定按频率：没有切换按钮
+assert.equal([...dom.window.document.querySelectorAll('[role="dialog"] button')].filter((node) => node.textContent === '按分组' || node.textContent === '按频率').length, 0, '不应再有按分组/按频率切换')
+
 
 // 默认全部折叠
 const groupsAtStart = [...dom.window.document.querySelectorAll('[data-group]')]

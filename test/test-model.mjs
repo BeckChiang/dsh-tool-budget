@@ -82,9 +82,14 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
 {
   const result = estimate({ hiddenChars: 3600, contextTokens: 100000, toolBlockTokens: 12000, avgTurnTokens: 8000, settings: DEFAULT_SETTINGS })
   assert.equal(result.savedTokens, 1000)
+  assert.equal(result.netPerTurnTokens, 1000, '没有常驻开销时净省等于节省')
   assert.equal(result.repayTokens, 88000)
   assert.equal(result.breakevenTurns, 88)
   assert.equal(result.overThreshold, true, '88000 > 8000*2')
+  const withOverhead = estimate({ hiddenChars: 3600, contextTokens: 100000, toolBlockTokens: 12000, avgTurnTokens: 8000, overheadTokens: 200, settings: DEFAULT_SETTINGS })
+  assert.equal(withOverhead.overheadTokens, 200)
+  assert.equal(withOverhead.netPerTurnTokens, 800, '模式常驻开销应从净省里扣掉')
+  assert.equal(DEFAULT_SETTINGS.modeAutoOverhead, 200)
   const settings = normalizeSettings({ charsPerToken: 0, missFactor: 3, thresholdMultiplier: 0 })
   assert.equal(settings.charsPerToken, 1, '越界参数应被夹回区间')
   assert.equal(settings.missFactor, 1)
@@ -101,13 +106,16 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
   for (let index = 0; index < 5; index += 1) {
     samples.push({ groups: new Set(['media', 'session']) })
   }
-  const packs = clusterPacks([...samples, { groups: new Set(['office']) }])
+  const labels = { fs: '文件', shell: '命令', web: '网页', media: '图像', session: '会话' }
+  const packs = clusterPacks([...samples, { groups: new Set(['office']) }], (id) => labels[id] ?? id)
   assert.equal(packs.length, 2, '两个习惯应各成一包，单例不成包')
   const codePack = packs.find((pack) => pack.groups.includes('fs'))
   assert.ok(codePack !== undefined)
   assert.equal(codePack.kind, 'learned')
   assert.ok(codePack.source.sessions >= 4)
   assert.ok(codePack.source.confidence >= 0.6)
+  assert.equal(codePack.name, '文件、命令、网页', '学习包名字要用组的中文名')
+  assert.deepEqual(codePack.groupLabels, ['文件', '命令', '网页'])
 }
 
 // 6. 插件分类
