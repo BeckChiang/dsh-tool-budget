@@ -21,9 +21,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { UsageIndex, decodeLog } from './lib/usage.js'
-import { BudgetStore, resolveLevels, suggestions, protectionOf, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
+import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
 import { pluginOf, pluginLabel } from './lib/classify.js'
-import { estimate, normalizeSettings, toolChars } from './lib/cost.js'
+import { estimate, normalizeSettings, toolChars, DEFAULT_SETTINGS } from './lib/cost.js'
 import { Learner } from './lib/learning.js'
 import { makeT, normalizeLocale, setLocale } from './lib/i18n.js'
 
@@ -508,7 +508,9 @@ export function apply(ctx, config) {
     const context = contextOf(sessionId)
     const settings = normalizeSettings(store.preferences().cost)
     const mode = store.modeOf(sessionId)
-    const overheadTokens = mode === 'auto' ? settings.modeAutoOverhead : settings.modeQuietOverhead
+    // 常驻开销是三种模式的固有代价（ask/pin 的固定提示行、auto 的自愈说明），
+    // 属于实现事实而非用户偏好，所以不开放修改。
+    const overheadTokens = mode === 'auto' ? DEFAULT_SETTINGS.modeAutoOverhead : DEFAULT_SETTINGS.modeQuietOverhead
     const result = estimate({
       hiddenChars,
       contextTokens: context.contextTokens,
@@ -517,7 +519,25 @@ export function apply(ctx, config) {
       overheadTokens,
       settings,
     })
-    return { ...result, mode, estimated: context.estimated, contextTokens: context.contextTokens, avgTurnTokens: context.avgTurnTokens }
+    return {
+      ...result,
+      settings: {
+        ...result.settings,
+        modeAutoOverhead: DEFAULT_SETTINGS.modeAutoOverhead,
+        modeQuietOverhead: DEFAULT_SETTINGS.modeQuietOverhead,
+      },
+      mode,
+      estimated: context.estimated,
+      contextTokens: context.contextTokens,
+      avgTurnTokens: context.avgTurnTokens,
+    }
+  }
+
+  // 没显式选过包时等效于「全部保留」，所以那颗 chip 也要显示为选中。
+  function chosenPackIds(session, packId) {
+    const chosen = session.packs ?? []
+    if (chosen.length === 0) return packId === store.packs()[0]?.id
+    return chosen.includes(packId)
   }
 
   // --- 面板状态 -----------------------------------------------------------
@@ -629,7 +649,7 @@ export function apply(ctx, config) {
           ...pack,
           kind: pack.kind === 'learned' ? 'learned' : pack.kind === 'manual' ? 'manual' : 'pack',
           active: activePacks.includes(pack.id),
-          chosen: (session.packs ?? []).includes(pack.id),
+          chosen: chosenPackIds(session, pack.id),
           impact: impactOf(resolved),
           keptLabels: labelList(resolved),
         }
@@ -648,7 +668,7 @@ export function apply(ctx, config) {
       groups: orderedGroups,
       plugins: orderedPlugins,
       profiles: store.profiles().map((profile) => ({ ...profile, active: profile.id === (session.profileId ?? 'full') })),
-      packs: packs.map((pack) => ({ ...pack, active: activePacks.includes(pack.id), chosen: (session.packs ?? []).includes(pack.id) })),
+      packs: packs.map((pack) => ({ ...pack, active: activePacks.includes(pack.id), chosen: chosenPackIds(session, pack.id) })),
       sessionState: { profileId: session.profileId ?? 'full', packs: session.packs ?? [], groupLevels: session.groupLevels ?? {}, pluginLevels: session.pluginLevels ?? {} },
       levels: Object.fromEntries(levels),
       plans,
@@ -808,12 +828,10 @@ export function apply(ctx, config) {
       const pack = store.pack(String(body.packId ?? ''))
       if (pack === null) return { ok: false, error: t('err.noMatch', { needle: String(body.packId ?? '') }) }
       const session = sessionOf(sessionId)
-      const chosen = new Set(session.packs ?? [])
-      if (chosen.has(pack.id)) chosen.delete(pack.id)
-      else chosen.add(pack.id)
-      store.patchSession(sessionId, { packs: [...chosen] })
+      const packs = togglePack(session.packs ?? [], pack.id)
+      store.patchSession(sessionId, { packs })
       syncSession(sessionId)
-      return { ok: true, packs: [...chosen] }
+      return { ok: true, packs }
     }
     if (op === 'saveProfile') {
       const id = typeof body.id === 'string' && body.id !== '' ? body.id : `manual-${Date.now()}`

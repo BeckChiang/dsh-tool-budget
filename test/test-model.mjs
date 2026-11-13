@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 
-import { BudgetStore, resolveLevels, suggestions, protectionOf, BUILTIN_PACKS, CORE_ALWAYS } from '../lib/profiles.js'
+import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, BUILTIN_PACKS, CORE_ALWAYS } from '../lib/profiles.js'
 import { estimate, normalizeSettings, DEFAULT_SETTINGS, toolChars } from '../lib/cost.js'
 import { clusterPacks } from '../lib/learning.js'
 import { pluginOf, pluginLabel } from '../lib/classify.js'
@@ -90,6 +90,15 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
   assert.equal(withOverhead.overheadTokens, 200)
   assert.equal(withOverhead.netPerTurnTokens, 800, '模式常驻开销应从净省里扣掉')
   assert.equal(DEFAULT_SETTINGS.modeAutoOverhead, 200)
+  assert.equal(withOverhead.projectedTurnTokens, 7200, '切换后每轮 = 现在 8000 − 省下 1000 + 常驻 200')
+  assert.equal(result.projectedTurnTokens, 7000)
+  // 场景包：全部保留是互斥的全开状态，选别的包就不再亮
+  assert.deepEqual(togglePack(['everything'], 'core'), ['core'], '选核心包应摘掉全部保留')
+  assert.deepEqual(togglePack(['core'], 'code'), ['core', 'code'], '多个包可以叠加')
+  assert.deepEqual(togglePack(['core', 'code'], 'core'), ['code'], '再点一次取消该包')
+  assert.deepEqual(togglePack(['core'], 'core'), ['everything'], '点掉最后一个包回到全部保留')
+  assert.deepEqual(togglePack([], 'code'), ['code'])
+  assert.deepEqual(togglePack(['core'], 'everything'), ['everything'], '点全部保留清空其它包')
   const settings = normalizeSettings({ charsPerToken: 0, missFactor: 3, thresholdMultiplier: 0 })
   assert.equal(settings.charsPerToken, 1, '越界参数应被夹回区间')
   assert.equal(settings.missFactor, 1)

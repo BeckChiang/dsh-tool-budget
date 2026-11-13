@@ -128,6 +128,7 @@ const base = {
     breakevenTurns: 2,
     overheadTokens: 20,
     netPerTurnTokens: 100,
+    projectedTurnTokens: 1380,
     thresholdTokens: 900,
     overThreshold: false,
     hiddenChars: 432,
@@ -214,7 +215,9 @@ assert.ok(paramsButton !== undefined, '成本板块应有参数按钮')
 paramsButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 assert.ok(text().includes('参数含义'), '参数区应有标题')
-assert.equal(dom.window.document.querySelectorAll('[data-cost-param]').length, 7, '参数表应列出七个参数并逐个解释')
+assert.equal(dom.window.document.querySelectorAll('[data-cost-param]').length, 5, '参数表只列五个可改参数（两个常驻开销固定）')
+assert.equal(dom.window.document.querySelector('[data-cost-param="modeAutoOverhead"]'), null, '常驻开销不再出现在可改参数里')
+assert.ok(text().includes('切换后每轮约 1.4k token（现在 1.5k）'), '应显示切换后的预计每轮消耗')
 assert.ok(dom.window.document.querySelector('[data-cost-param="charsPerToken"]').textContent.includes('每 token 字符数'), '参数说明应解释 charsPerToken')
 
 // 展开其余板块（后面的内容断言需要）
