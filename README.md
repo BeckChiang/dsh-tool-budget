@@ -1,1 +1,80 @@
 # dsh-tool-budget
+
+给 [DeepSeek Harness](https://github.com/topics/deepseek-harness) 用的**会话级工具预算**：按方案 / 场景包 / 分组 / 插件决定模型这一轮能看见哪些工具，并给出调用次数与「换掉工具要重送多少上下文」的成本估算。
+
+> **这是从 [dsh-tool-switch](https://github.com/suqing114/dsh-tool-switch)（作者 [suqing114](https://github.com/suqing114)，MIT）衍生出来的独立项目，不是它的官方续作。**
+> 上游 0.3.0 提供了核心机制（`restrict` 会话级工具开关、分组、调用次数统计、面板）。本仓库保留其机制与设计，重写了 Host 与客户端两侧，新增：插件维度、场景包与学习包、三档强度、成本估算、三档模式、中英文切换。上游的 bug 修复不会自动流进来；这边改的也不会推回上游，除非有人单独提 PR。
+
+## 它解决什么
+
+工具一多，提示词里的工具清单本身就很贵，模型也更容易挑错工具。手动逐个勾选有两个问题：**勾选太麻烦**，以及**靠经验关会关错**（低频但关键的工具，比如 `present`、`ask_user_question`，关掉就直接卡住）。
+
+这个插件把决策单位从「一个工具」抬到「一组」「一个插件」「一个场景包」，并用三档强度代替二态开关：
+
+| 档位 | 模型看得见 | 能调用 | 用途 |
+| --- | --- | --- | --- |
+| 正常 | 是 | 是 | 默认 |
+| 降权 | 是 | 否（调用被拒绝，附带原因） | 保留可发现性，但明确劝阻；失败信息会告诉模型这是什么 |
+| 隐藏 | 否 | 否（`UNKNOWN_TOOL`） | 真正把 token 省下来 |
+
+## 功能
+
+- **调用次数**：本会话 / 近 30 天 / 全局三个口径，可切换；「未用 N」一键筛出零调用工具。数据只进面板，**不进提示词**，不会干扰模型，也不额外破坏缓存。
+- **三档强度**：每行工具三个小按钮；分组头可整组「全关 / 全开」。
+- **两种视图**：按功能组（fs / shell / web …）或按插件（`dsh-ops`、`dsh-free-search`、`mcp:<server>` …）。
+- **场景包**：全开 / 核心 / 写代码 / 查资料 / 出图 / 办公，可多选组合；也可把当前状态「存为方案」（profile）随时切回。
+- **学习包**：扫描本工作区的历史会话，按「同一会话里一起出现的工具组」聚类出候选包，**只建议、不自动生效**。学习包只读：可以复制成手动包再改，不能直接编辑。
+- **建议集**：根据「本工作区低频 + 有调用的组不提议休眠 + 被隐藏却在用的组提议恢复」给出一键建议，不自动执行。
+- **成本估算**：`saved = 隐藏工具字符数 / charsPerToken`；`repay = (当前上下文 − 工具块) × missFactor`；`net = saved − repay`。参数（token 换字符比、重送系数、阈值倍数、价格）都能在面板里改，计算方法与误差会一并显示。
+- **三档模式**：`auto`（模型可自行用 `tool_budget` 唤醒，提示最完整、最贵）/ `ask`（默认，模型报告缺什么，由你点按钮恢复，最省）/ `pin`（硬关，工具描述最短）。
+- **中英文切换**：面板、工具描述、命令与错误文案都会跟着变；切换语言会重新注册工具（破一次前缀缓存，面板里有提示）。
+
+## 安装
+
+在本机 DSH 工作区里用插件管理器装本地目录：
+
+```
+plugin_manager install_bundle target="link:C:/Users/recko/DSH/plugins/dsh-tool-budget"
+```
+
+装好后输入框下方的 dock 会出现「工具预算」按钮；Host 半侧改动需要重挂插件（`plugin_manager set_plugin` 关闭再打开，entryId 是 `include:dsh-tool-budget`），客户端半侧刷新页面即可。
+
+也可以把仓库放进 profile 的 `node_modules` 再由 `cordis.patch.yml` 挂载。
+
+## 面板怎么用
+
+1. 点 dock 上的「工具预算」打开面板；
+2. 顶部切模式（自动 / 询问 / 硬关）、选方案或场景包；
+3. 工具栏切统计口径（本会话 / 30 天 / 全局）、视图（分组 / 插件）、「未用 N」筛选、按频率排序；
+4. 每行右侧三档按钮直接改强度；带「受保护」标记的工具改成非正常会先要你确认；
+5. 底部看成本估算与学习状态，参数可展开修改。
+
+## 工具与命令
+
+- 模型侧工具 `tool_budget`：`list` / `on` / `off` / `warn` / `reset` / `profile` / `pack` / `cost`，`target` 支持分组名、插件名、`all`、工具名或通配。
+- 斜杠命令 `/budget`：`list`、`reset`、`all on`、`all off`、`on <target>`、`off <target>`、`warn <target>`。
+
+## 边界
+
+- **核心工具永不可关**：`tool_budget`、`present`、`ask_user_question`。
+- **受保护工具**：读写文件、命令执行、`tool_switch` 等；可以关，但要二次确认。
+- **`· 会话固定`**：agent 作用域内注册的工具（部分 preset 注入的）不受 `restrict` 约束，开关对它无效，面板会标出来。
+- 生效时机：改完在下一条消息生效（提示词在下一次请求时重建）。
+- 数据目录：默认 `~/.dsh-tool-budget/`（`budget.json`、`preferences.json`、`usage-cache.json`、`learning.json`），可用 `stateDir` 配置覆盖。
+- HTTP 路由仅回环可用，没有鉴权，不要暴露到公网。
+
+## 开发与测试
+
+无构建步骤：`index.js` 是 Host 半侧，`lib/client.js` 是手写客户端 bundle（`window.__ModuleLoader__.load`），`lib/*.js` 是纯逻辑模块。
+
+```bash
+node test/test-model.mjs   # 方案解析、成本公式、学习聚类、插件分类、字典完整性
+node test/test-usage.mjs   # 多帧 zstd 日志解码、调用计数、增量缓存
+node test/test-panel.mjs   # jsdom + 真 React 挂面板（需要 react/react-dom/jsdom）
+```
+
+`test-panel.mjs` 默认从 `../../../tmp/react-test/package.json` 解析依赖，可用 `DSH_APP` 指到别的 `node_modules` 目录。
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。上游 [dsh-tool-switch](https://github.com/suqing114/dsh-tool-switch) 同为 MIT，版权与衍生关系见 `package.json` 的 `derivedFrom` 字段与 `LICENSE` 末尾的声明。

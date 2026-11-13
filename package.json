@@ -1,0 +1,68 @@
+{
+  "name": "dsh-tool-budget",
+  "version": "0.1.0",
+  "description": "Session-level tool budget for DeepSeek Harness: scene packs, group/plugin tiers, per-tool call counts, cost estimate and learning packs. Derived from dsh-tool-switch by suqing114.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "locale/",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "tools",
+    "budget",
+    "usage",
+    "cost"
+  ],
+  "author": "BeckChiang (https://github.com/BeckChiang)",
+  "contributors": [
+    "suqing114 (https://github.com/suqing114) - 上游 dsh-tool-switch 作者"
+  ],
+  "derivedFrom": {
+    "name": "dsh-tool-switch",
+    "author": "suqing114",
+    "url": "https://github.com/suqing114/dsh-tool-switch",
+    "version": "0.3.0",
+    "license": "MIT"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/BeckChiang/dsh-tool-budget#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BeckChiang/dsh-tool-budget.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BeckChiang/dsh-tool-budget/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

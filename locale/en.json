@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tool budget",
+    "description": "Manage the tools the model may use by profile, scene pack, group or plugin, with call counts, a cost estimate and a zh/en switch."
+  }
+}
