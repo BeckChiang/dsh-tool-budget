@@ -188,6 +188,24 @@ const text = () => dom.window.document.querySelector('[role="dialog"]')?.textCon
 assert.ok(text().includes('工具预算'), `面板标题应为中文，实际：${text().slice(0, 60)}`)
 assert.ok(text().includes('未用 2'), '工具栏应显示未用数量 2')
 
+// 默认全部折叠
+const groupsAtStart = [...dom.window.document.querySelectorAll('[data-group]')]
+assert.ok(groupsAtStart.length > 0, '应该渲染出分组')
+assert.equal(dom.window.document.querySelectorAll('[data-tool]').length, 0, '默认应该收起所有分组，不渲染工具行')
+assert.ok(
+  groupsAtStart.every((node) => node.getAttribute('data-collapsed') === 'true'),
+  '每个分组的 data-collapsed 都应为 true',
+)
+assert.ok(
+  groupsAtStart.every((node) => node.querySelector('[data-collapse]').getAttribute('aria-expanded') === 'false'),
+  '每个组头的 aria-expanded 都应为 false',
+)
+
+// 逐个展开，后面的断言需要工具行
+for (const node of groupsAtStart) node.querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(90)
+assert.ok(dom.window.document.querySelectorAll('[data-tool]').length > 0, '展开后应出现工具行')
+
 // 三档按钮：每行三个，locked 与否都渲染 data-level
 const levels = dom.window.document.querySelectorAll('[data-level]')
 assert.ok(levels.length >= 9, `三档按钮应至少 9 个，实际 ${levels.length}`)
@@ -230,9 +248,13 @@ pluginChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 const pluginGroups = [...dom.window.document.querySelectorAll('[data-group]')]
 assert.ok(pluginGroups.length > 0, '插件视图应有分组')
+assert.equal(dom.window.document.querySelectorAll('[data-tool]').length, 0, '插件视图默认也应全部收起')
 const firstPluginGroupId = pluginGroups[0].getAttribute('data-group')
 const firstPluginGroup = () => dom.window.document.querySelector(`[data-group="${firstPluginGroupId}"]`)
+firstPluginGroup().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
 const pluginRowsBefore = firstPluginGroup().querySelectorAll('[data-tool]').length
+assert.ok(pluginRowsBefore > 0, '插件分组展开后应有工具行')
 firstPluginGroup().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 assert.equal(firstPluginGroup().querySelectorAll('[data-tool]').length, 0, '插件分组收起后工具行应消失')
