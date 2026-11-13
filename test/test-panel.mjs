@@ -114,11 +114,12 @@ const base = {
   packs: [{ id: 'everything', kind: 'builtin', name: '全开', groups: ['*'], plugins: [], active: true, chosen: true }],
   plans: [
     { id: 'everything', kind: 'pack', groups: ['*'], plugins: [], active: true, chosen: true, impact: { kept: 3, off: 0 }, keptLabels: [] },
-    { id: 'core', kind: 'profile', packs: ['everything'], active: false, impact: { kept: 3, off: 0 }, keptLabels: [] },
+    { id: 'code', kind: 'profile', builtin: true, packs: ['code'], active: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'] },
+    { id: 'code', kind: 'pack', groups: ['fs'], plugins: [], chosen: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'] },
   ],
   sessionState: { profileId: 'full', packs: ['everything'] },
   levels: { read: 'normal', ops_bash: 'hidden', never_used: 'hidden' },
-  suggestions: { sleep: [{ group: 'web', kind: 'sleep', label: '网页', tools: 2, calls: 0 }], wake: [] },
+  suggestions: { sleep: [{ group: 'web', kind: 'sleep', label: '网页', tools: 2, calls: 0, tokens: 40 }], wake: [] },
   usageReady: true,
   learning: { status: 'idle', packs: [] },
   cost: {
@@ -129,6 +130,10 @@ const base = {
     netPerTurnTokens: 100,
     thresholdTokens: 900,
     overThreshold: false,
+    hiddenChars: 432,
+    contextTokens: 9000,
+    toolBlockTokens: 800,
+    avgTurnTokens: 1500,
     settings: { charsPerToken: 3.6, missFactor: 1, thresholdMultiplier: 2, priceInput: 2 },
   },
 }
@@ -192,14 +197,41 @@ assert.ok(dialog !== null, '点开后面板应该在')
 
 const text = () => dom.window.document.querySelector('[role="dialog"]')?.textContent ?? ''
 assert.ok(text().includes('工具预算'), `面板标题应为中文，实际：${text().slice(0, 60)}`)
+// 板块默认只展开成本
+const sectionToggle = (id) => dom.window.document.querySelector(`[data-section-toggle="${id}"]`)
+assert.ok(sectionToggle('cost') !== null, '成本板块应该有折叠按钮')
+assert.equal(sectionToggle('cost').getAttribute('aria-expanded'), 'true', '默认展开成本板块')
+for (const id of ['suggest', 'mode', 'plan', 'tools']) {
+  assert.ok(sectionToggle(id) !== null, `${id} 板块应该有折叠按钮`)
+  assert.equal(sectionToggle(id).getAttribute('aria-expanded'), 'false', `${id} 板块默认应收起`)
+}
+
+// 成本公式与参数含义
+assert.ok(text().includes('省下的：'), '成本应解释节省怎么算')
+assert.ok(text().includes('净省 ='), '成本应写出净省公式')
+const paramsButton = [...dialog.querySelectorAll('button')].find((item) => item.textContent === '参数')
+assert.ok(paramsButton !== undefined, '成本板块应有参数按钮')
+paramsButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.ok(text().includes('参数含义'), '参数区应有标题')
+assert.equal(dom.window.document.querySelectorAll('[data-cost-param]').length, 7, '参数表应列出七个参数并逐个解释')
+assert.ok(dom.window.document.querySelector('[data-cost-param="charsPerToken"]').textContent.includes('每 token 字符数'), '参数说明应解释 charsPerToken')
+
+// 展开其余板块（后面的内容断言需要）
+for (const id of ['suggest', 'mode', 'plan', 'tools']) {
+  sectionToggle(id).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  await flush(30)
+}
+
+assert.ok(text().includes('休眠后每轮约省 40 token'), '建议标题后应说明原因与预计节省')
 assert.ok(text().includes('未用 2'), '工具栏应显示未用数量 2')
 
 // 分区顺序：成本 → 建议 → 模式 → 方案
 const orderedText = text().replace(/\s+/g, '')
 const positionOf = (needle) => orderedText.indexOf(needle)
 assert.ok(positionOf('成本估算') >= 0 && positionOf('成本估算') < positionOf('建议'), '成本应排在建议之前')
-assert.ok(positionOf('建议') < positionOf('模式auto'), '建议应排在模式之前')
-assert.ok(positionOf('模式auto') < positionOf('方案'), '模式应排在方案之前')
+assert.ok(positionOf('建议') < positionOf('关掉不用的工具能省钱'), '建议应排在模式之前')
+assert.ok(positionOf('关掉不用的工具能省钱') < positionOf('点一下就按它调工具'), '模式应排在方案之前')
 assert.ok(orderedText.includes('+100token/轮'), `成本应显示净省数字，实际：${orderedText.slice(0, 80)}`)
 assert.ok(orderedText.includes('模式常驻20'), '成本应显示模式常驻开销')
 
@@ -246,6 +278,17 @@ assert.ok(unusedChip !== undefined, '应该有「未用」筛选按钮')
 unusedChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 assert.ok(dom.window.document.querySelector('[data-tool="never_used"]') !== null, '筛选后应保留未用工具')
+const autoExpanded = [...dom.window.document.querySelectorAll('[data-group]')].find((node) => node.getAttribute('data-collapsed') === 'false')
+assert.ok(autoExpanded !== undefined, '开启未用筛选时应自动展开命中的分组')
+autoExpanded.querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.equal(
+  dom.window.document.querySelector(`[data-group="${autoExpanded.getAttribute('data-group')}"]`).getAttribute('data-collapsed'),
+  'true',
+  '筛选状态下分组仍应能收起',
+)
+autoExpanded.querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
 assert.equal(dom.window.document.querySelector('[data-tool="read"]'), null, '筛选后不应显示用过的工具')
 
 // 再点一次恢复
@@ -266,6 +309,8 @@ assert.ok(dom.window.document.querySelector('[data-tool="read"]') !== null, '取
 
 // 场景包：名字 + 影响面（保留 / 关闭）都要看得见
 assert.ok(text().includes('全部保留'), '场景包应显示直观的名字')
+assert.ok(!text().includes('写代码'), '内置方案与场景包重复时不应再显示第二份')
+assert.ok(text().includes('代码 + 文件'), '场景包本身仍应显示')
 assert.ok(/保留\s*\d+\s*·\s*关闭\s*\d+/.test(text()), `场景包应显示保留/关闭的数量，实际：${text().slice(0, 200)}`)
 
 // 分组折叠：组头可收起 / 展开（功能组视图）

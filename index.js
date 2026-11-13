@@ -607,11 +607,21 @@ export function apply(ctx, config) {
     }
     const labelList = (resolved) => resolved.groups.filter((group) => group !== '*').map((group) => groupLabels.get(group) ?? group)
     const rawSuggestions = suggestions({ catalog: catalog.tools, usage: usage?.usage, levels })
-    const decorate = (item) => ({ ...item, label: groupLabels.get(item.group) ?? item.group })
+    const charsByGroup = new Map()
+    for (const tool of catalog.tools) {
+      const chars = toolChars({ name: tool.name, description: tool.detail || tool.description })
+      charsByGroup.set(tool.group, (charsByGroup.get(tool.group) ?? 0) + chars)
+    }
+    const tokenSettings = normalizeSettings(store.preferences().cost)
+    const decorate = (item) => ({
+      ...item,
+      label: groupLabels.get(item.group) ?? item.group,
+      tokens: Math.round((charsByGroup.get(item.group) ?? 0) / tokenSettings.charsPerToken),
+    })
     const plans = [
       ...store.profiles().map((profile) => {
         const resolved = expandPlan(profile)
-        return { ...profile, kind: 'profile', active: profile.id === (session.profileId ?? 'full'), impact: impactOf(resolved), keptLabels: labelList(resolved) }
+        return { ...profile, kind: 'profile', builtin: profile.kind === 'builtin', active: profile.id === (session.profileId ?? 'full'), impact: impactOf(resolved), keptLabels: labelList(resolved) }
       }),
       ...packs.map((pack) => {
         const resolved = expandPlan(pack)
