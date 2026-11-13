@@ -206,6 +206,40 @@ unusedChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 assert.ok(dom.window.document.querySelector('[data-tool="read"]') !== null, '取消筛选后应恢复显示')
 
+// 分组折叠：组头可收起 / 展开（功能组视图）
+const readRow = dom.window.document.querySelector('[data-tool="read"]')
+assert.ok(readRow !== null, '分组视图里应该有 read 行')
+const groupId = readRow.closest('[data-group]').getAttribute('data-group')
+const groupNode = () => dom.window.document.querySelector(`[data-group="${groupId}"]`)
+const rowsBefore = groupNode().querySelectorAll('[data-tool]').length
+assert.ok(rowsBefore > 0, '分组内应有工具行')
+groupNode().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.equal(groupNode().querySelectorAll('[data-tool]').length, 0, '收起后组内工具行应消失')
+assert.equal(groupNode().getAttribute('data-collapsed'), 'true', '收起状态应写进 data-collapsed')
+assert.equal(groupNode().querySelector('[data-collapse]').getAttribute('aria-expanded'), 'false', 'aria-expanded 应为 false')
+groupNode().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.equal(groupNode().querySelectorAll('[data-tool]').length, rowsBefore, '展开后工具行应恢复')
+assert.equal(groupNode().getAttribute('data-collapsed'), 'false', '展开状态应写回')
+
+// 插件视图同样可折叠
+const pluginChip = [...dom.window.document.querySelectorAll('[role="dialog"] button')].find((item) => item.textContent === '按插件')
+assert.ok(pluginChip !== undefined, '应该有「按插件」视图按钮')
+pluginChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+const pluginGroups = [...dom.window.document.querySelectorAll('[data-group]')]
+assert.ok(pluginGroups.length > 0, '插件视图应有分组')
+const firstPluginGroupId = pluginGroups[0].getAttribute('data-group')
+const firstPluginGroup = () => dom.window.document.querySelector(`[data-group="${firstPluginGroupId}"]`)
+const pluginRowsBefore = firstPluginGroup().querySelectorAll('[data-tool]').length
+firstPluginGroup().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.equal(firstPluginGroup().querySelectorAll('[data-tool]').length, 0, '插件分组收起后工具行应消失')
+firstPluginGroup().querySelector('[data-collapse]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.equal(firstPluginGroup().querySelectorAll('[data-tool]').length, pluginRowsBefore, '插件分组展开后工具行应恢复')
+
 // 语言切换
 const langButton = [...dom.window.document.querySelectorAll('[role="dialog"] button')].find((item) => item.getAttribute('title') === 'language')
 assert.ok(langButton !== undefined, '应该有语言切换按钮')
