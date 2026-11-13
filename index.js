@@ -147,6 +147,18 @@ export function apply(ctx, config) {
   /** sessionId -> { size, mtime, contextTokens, avgTurnTokens } */
   const contextCache = new Map()
 
+  /** 路由收到的是裸 uuid 或带 session- 前缀，统一成 live 里那把钥匙。 */
+  function canonicalSession(sessionId) {
+    const raw = String(sessionId ?? '')
+    if (live.has(raw)) return raw
+    const bare = raw.startsWith('session-') ? raw.slice('session-'.length) : raw
+    for (const key of live.keys()) {
+      const candidate = key.startsWith('session-') ? key.slice('session-'.length) : key
+      if (candidate === bare) return key
+    }
+    return raw
+  }
+
   function viewOf(agent) {
     try {
       return ctx.tools.view(agent)
@@ -264,7 +276,7 @@ export function apply(ctx, config) {
   }
 
   function levelsOf(sessionId, catalog) {
-    return resolveLevels({ session: sessionOf(sessionId), catalog, packs: store.packs() })
+    return resolveLevels({ session: sessionOf(sessionId), catalog: catalog.tools, packs: store.packs() })
   }
 
   /**
@@ -801,7 +813,7 @@ export function apply(ctx, config) {
       return
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
-      const sessionId = url.searchParams.get('session') ?? ''
+      const sessionId = canonicalSession(url.searchParams.get('session') ?? '')
       if (sessionId.length === 0) {
         send(res, 400, { ok: false, error: t('err.missingSession') })
         return
@@ -820,7 +832,7 @@ export function apply(ctx, config) {
     }
     try {
       const body = await readJsonBody(req)
-      const sessionId = typeof body.session === 'string' ? body.session : ''
+      const sessionId = canonicalSession(typeof body.session === 'string' ? body.session : '')
       if (sessionId.length === 0) {
         send(res, 400, { ok: false, error: t('err.session') })
         return
@@ -830,7 +842,7 @@ export function apply(ctx, config) {
         send(res, 400, result)
         return
       }
-      send(res, 200, { ...result, state: buildState(sessionId) })
+      send(res, 200, { ...result, ...buildState(sessionId), ok: true })
     } catch (error) {
       warn('state POST failed', error)
       send(res, 400, { ok: false, error: String(error?.message ?? error) })
@@ -843,7 +855,7 @@ export function apply(ctx, config) {
       return
     }
     const url = new URL(req.url ?? USAGE_ROUTE, 'http://localhost')
-    const sessionId = url.searchParams.get('session') ?? ''
+    const sessionId = canonicalSession(url.searchParams.get('session') ?? '')
     if (sessionId.length === 0) {
       send(res, 400, { ok: false, error: t('err.missingSession') })
       return
@@ -864,7 +876,7 @@ export function apply(ctx, config) {
       return
     }
     const url = new URL(req.url ?? COST_ROUTE, 'http://localhost')
-    const sessionId = url.searchParams.get('session') ?? ''
+    const sessionId = canonicalSession(url.searchParams.get('session') ?? '')
     if (sessionId.length === 0) {
       send(res, 400, { ok: false, error: t('err.missingSession') })
       return
