@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-budget",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Session-level tool budget for DeepSeek Harness: scene packs, group/plugin tiers, per-tool call counts, cost estimate and learning packs. Derived from dsh-tool-switch by suqing114.",
   "type": "module",
   "main": "index.js",
@@ -18,17 +18,19 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
-    "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "deepseek-harness",
     "cordis",
     "tools",
-    "budget",
+    "token-budget",
     "usage",
-    "cost"
+    "cost",
+    "tool-switch"
   ],
   "author": "BeckChiang (https://github.com/BeckChiang)",
   "contributors": [
@@ -64,5 +66,8 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
+  },
+  "engines": {
+    "node": ">=22.19.0"
   }
 }

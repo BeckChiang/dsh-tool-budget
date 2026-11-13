@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Tool budget",
-    "description": "Manage the tools the model may use by profile, scene pack, group or plugin, with call counts, a cost estimate and a zh/en switch."
+    "description": "Decide which tools the model can see, by profile, scene pack, group or plugin — three severity levels, per-tool call counts, a per-turn token cost estimate, data-driven sleep suggestions and packs learned from past sessions, with a zh/en switch."
   }
 }
