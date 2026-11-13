@@ -104,7 +104,7 @@ const base = {
           description: '从未被调用',
           signature: '()',
           detail: '从未被调用。',
-          calls: { session: 0, d30: 0, all: 0 },
+          calls: null,
         },
       ],
     },
@@ -151,7 +151,12 @@ dom.window.fetch = async (url, init = {}) => {
     }
     return { ok: true, status: 200, json: async () => current }
   }
-  if (target.startsWith('/tool-budget/usage')) return { ok: true, status: 200, json: async () => ({ ok: true, tools: {}, usage: {} }) }
+  if (target.startsWith('/tool-budget/usage'))
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, usage: { never_used: { session: 0, d30: 0, all: 500, last: null } } }),
+    }
   return { ok: true, status: 200, json: async () => current }
 }
 globalThis.fetch = dom.window.fetch
@@ -232,6 +237,24 @@ for (const id of ['suggest', 'mode', 'plan', 'tools']) {
   sectionToggle(id).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
   await flush(30)
 }
+
+// 口径切换必须真的改变计数：state 里 calls 为 null 的工具靠 usage 路由补上
+const unusedLabel = () => {
+  const chips = [...dom.window.document.querySelectorAll('[role="dialog"] button')]
+  return (chips.find((item) => (item.textContent ?? '').startsWith('未用'))?.textContent ?? '').trim()
+}
+assert.equal(unusedLabel(), '未用 2', `本会话口径应有两个未用，实际：${unusedLabel()}`)
+const pickMetric = async (label) => {
+  const chip = [...dom.window.document.querySelectorAll('[role="dialog"] button')].find((item) => (item.textContent ?? '').trim() === label)
+  assert.ok(chip !== undefined, `应能找到口径按钮 ${label}`)
+  chip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  await flush(40)
+}
+await pickMetric('30 天')
+assert.equal(unusedLabel(), '未用 1', `30 天口径应只剩一个未用，实际：${unusedLabel()}`)
+await pickMetric('全局')
+assert.equal(unusedLabel(), '未用 0', `全局口径应无未用，实际：${unusedLabel()}`)
+await pickMetric('本会话')
 
 assert.ok(text().includes('休眠后每轮约省 40 token'), '建议标题后应说明原因与预计节省')
 assert.ok(text().includes('未用 2'), '工具栏应显示未用数量 2')
