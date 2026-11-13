@@ -111,7 +111,7 @@ const base = {
   ],
   plugins: [{ id: 'core', label: 'core', kind: 'core', tools: 1, counts: { normal: 1, warn: 0, hidden: 0 } }],
   profiles: [{ id: 'full', kind: 'builtin', name: '全开', active: true }],
-  packs: [{ id: 'everything', kind: 'builtin', name: '全开', active: true, chosen: true }],
+  packs: [{ id: 'everything', kind: 'builtin', name: '全开', groups: ['*'], plugins: [], active: true, chosen: true }],
   sessionState: { profileId: 'full', packs: ['everything'] },
   levels: { read: 'normal', ops_bash: 'hidden', never_used: 'hidden' },
   suggestions: { sleep: [], wake: [] },
@@ -223,6 +223,21 @@ assert.equal(dom.window.document.querySelector('[data-tool="read"]'), null, '筛
 unusedChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(60)
 assert.ok(dom.window.document.querySelector('[data-tool="read"]') !== null, '取消筛选后应恢复显示')
+
+// 「已关闭」筛选：只留 hidden / warn 的工具
+const closedChip = [...dom.window.document.querySelectorAll('[role="dialog"] button')].find((item) => item.textContent.startsWith('已关闭'))
+assert.ok(closedChip !== undefined, '应该有「已关闭」筛选按钮')
+closedChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.ok(dom.window.document.querySelector('[data-tool="ops_bash"]') !== null, '筛选后应保留被关闭的 ops_bash')
+assert.equal(dom.window.document.querySelector('[data-tool="read"]'), null, '筛选后不应显示开启中的 read')
+closedChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(60)
+assert.ok(dom.window.document.querySelector('[data-tool="read"]') !== null, '取消筛选后应恢复显示')
+
+// 场景包：名字 + 影响面（保留 / 关闭）都要看得见
+assert.ok(text().includes('全部保留'), '场景包应显示直观的名字')
+assert.ok(/保留\s*\d+\s*·\s*关闭\s*\d+/.test(text()), `场景包应显示保留/关闭的数量，实际：${text().slice(0, 200)}`)
 
 // 分组折叠：组头可收起 / 展开（功能组视图）
 const readRow = dom.window.document.querySelector('[data-tool="read"]')
