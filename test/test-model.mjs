@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 
-import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, BUILTIN_PACKS, CORE_ALWAYS } from '../lib/profiles.js'
+import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, profileFromSession, BUILTIN_PACKS, CORE_ALWAYS } from '../lib/profiles.js'
 import { estimate, normalizeSettings, DEFAULT_SETTINGS, toolChars } from '../lib/cost.js'
 import { clusterPacks } from '../lib/learning.js'
 import { pluginOf, pluginLabel } from '../lib/classify.js'
@@ -104,6 +104,25 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
   assert.equal(settings.missFactor, 1)
   assert.equal(settings.thresholdMultiplier, 1)
   assert.ok(toolChars({ name: 'ab', description: 'cd', parameters: {} }) > 0)
+}
+
+// 4.5 方案：选包会清掉精细调整；存为方案要把精细调整一起存
+{
+  const catalog = [
+    { name: 'read', group: 'fs', plugin: 'core' },
+    { name: 'x_create', group: 'x:create', plugin: 'core' },
+  ]
+  const packs = [{ id: 'everything', groups: ['*'], plugins: [] }]
+  const withOverride = { packs: ['everything'], groupLevels: { 'x:create': 'hidden' }, levels: {}, pluginLevels: {} }
+  assert.equal(resolveLevels({ session: withOverride, catalog, packs }).levels.get('x_create'), 'hidden', '精细调整应覆盖包')
+  const cleared = { packs: ['everything'], levels: {}, groupLevels: {}, pluginLevels: {} }
+  assert.equal(resolveLevels({ session: cleared, catalog, packs }).levels.get('x_create'), 'normal', '选包清掉调整后应全开')
+  const profile = profileFromSession(withOverride, { id: 'p1', name: '我的习惯' })
+  assert.equal(profile.kind, 'manual')
+  assert.equal(profile.groupLevels['x:create'], 'hidden', '存方案要把精细调整一起存')
+  assert.deepEqual(profile.packs, ['everything'])
+  const restored = resolveLevels({ session: { packs: profile.packs, levels: profile.levels, groupLevels: profile.groupLevels, pluginLevels: profile.pluginLevels }, catalog, packs })
+  assert.equal(restored.levels.get('x_create'), 'hidden', '应用方案应带回精细调整')
 }
 
 // 5. 学习聚类：同一习惯的会话并簇，样本不足不产出

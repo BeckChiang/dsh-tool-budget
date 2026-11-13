@@ -21,7 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { UsageIndex, decodeLog } from './lib/usage.js'
-import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
+import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, profileFromSession, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
 import { pluginOf, pluginLabel } from './lib/classify.js'
 import { estimate, normalizeSettings, toolChars, DEFAULT_SETTINGS } from './lib/cost.js'
 import { Learner } from './lib/learning.js'
@@ -820,7 +820,13 @@ export function apply(ctx, config) {
     if (op === 'profile') {
       const profile = store.profile(String(body.profileId ?? ''))
       if (profile === null) return { ok: false, error: t('err.noMatch', { needle: String(body.profileId ?? '') }) }
-      store.patchSession(sessionId, { profileId: profile.id, packs: [...(profile.packs ?? [])] })
+      store.patchSession(sessionId, {
+        profileId: profile.id,
+        packs: [...(profile.packs ?? [])],
+        levels: { ...(profile.levels ?? {}) },
+        groupLevels: { ...(profile.groupLevels ?? {}) },
+        pluginLevels: { ...(profile.pluginLevels ?? {}) },
+      })
       syncSession(sessionId)
       return { ok: true, profile: profile.id }
     }
@@ -829,14 +835,15 @@ export function apply(ctx, config) {
       if (pack === null) return { ok: false, error: t('err.noMatch', { needle: String(body.packId ?? '') }) }
       const session = sessionOf(sessionId)
       const packs = togglePack(session.packs ?? [], pack.id)
-      store.patchSession(sessionId, { packs })
+      // 选包就是「按这个预设重来」：之前逐个工具/分组/插件的精细调整一并清掉，
+      // 否则会出现「选了全部保留但还有工具关着」。要保留调整就把它存成方案。
+      store.patchSession(sessionId, { packs, levels: {}, groupLevels: {}, pluginLevels: {} })
       syncSession(sessionId)
       return { ok: true, packs }
     }
     if (op === 'saveProfile') {
       const id = typeof body.id === 'string' && body.id !== '' ? body.id : `manual-${Date.now()}`
-      const profile = { id, kind: 'manual', packs: [...(sessionOf(sessionId).packs ?? [])] }
-      if (typeof body.name === 'string' && body.name !== '') profile.name = body.name
+      const profile = profileFromSession(sessionOf(sessionId), { id, name: body.name })
       store.addProfile(profile)
       return { ok: true, profile }
     }
