@@ -899,6 +899,10 @@ export function apply(ctx, config) {
     })
 
     const mode = store.modeOf(sessionId)
+    const builtins = builtinSnapshot(catalog.tools, store)
+    if (builtins.changed) {
+      store.setBuiltins({ ...builtins.snapshot, at: new Date().toISOString() })
+    }
     return {
       ok: true,
       session: sessionId,
@@ -920,6 +924,19 @@ export function apply(ctx, config) {
       learnTurns: Number(store.preferences().learnTurns ?? 3),
       usageReady: usage !== null,
       learning: learner.status({ workspace: workspaceOf(sessionId) }),
+      workspace: workspaceOf(sessionId),
+      builtins: {
+        total: builtins.total,
+        changed: builtins.changed,
+        at: builtins.changed ? new Date().toISOString() : builtins.prevAt,
+        prevAt: builtins.prevAt,
+        added: builtins.added.length,
+        removed: builtins.removed.length,
+        addedNames: builtins.added.slice(0, 5),
+        removedNames: builtins.removed.slice(0, 5),
+        deltas: builtins.deltas,
+        impacts: builtins.impacts,
+      },
       cost: costFor(sessionId, catalog, levels),
       updatedAt: new Date().toISOString(),
     }
@@ -1264,6 +1281,13 @@ export function apply(ctx, config) {
       store.addPack(adopted)
       learner.markAdopted?.(pack.id)
       return { ok: true, key: `pack:${adopted.id}`, name: adopted.name }
+    }
+    if (op === 'refreshBuiltins') {
+      const catalog = catalogOf(sessionId)
+      const builtins = builtinSnapshot(catalog.tools, store)
+      const at = new Date().toISOString()
+      store.setBuiltins({ ...builtins.snapshot, at })
+      return { ok: true, refreshed: true, at, changed: builtins.changed, added: builtins.added.length, removed: builtins.removed.length, deltas: builtins.deltas, impacts: builtins.impacts }
     }
     if (op === 'learnTurns') {
       const value = Number(body.turns)

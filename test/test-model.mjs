@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict'
 
+import { catalogSignature } from '../lib/profiles.js'
 import { MODES, BudgetStore, resolveLevels, planHash, protectionOf, togglePack, normalizePacks, profileFromSession, BUILTIN_PACKS, CORE_ALWAYS , diffLevels } from '../lib/profiles.js'
 import { sessionAdjustments, Learner } from '../lib/learning.js'
 import { estimate, normalizeSettings, DEFAULT_SETTINGS, toolChars } from '../lib/cost.js'
@@ -241,3 +242,9 @@ console.log('test-model: all assertions passed')
   fs.rmSync(dir, { recursive: true, force: true })
   console.log('ok 4.8 learning workspace scope')
 }
+
+
+// 8. 内置方案快照签名：同一组工具名顺序无关，增删工具会变
+assert.equal(catalogSignature(['a','b']), catalogSignature(['b','a']), '签名应与顺序无关')
+assert.notEqual(catalogSignature(['a','b']), catalogSignature(['a','b','c']), '增删工具应改变签名')
+console.log('catalogSignature ok')
