@@ -39,6 +39,15 @@ plugin_manager install_bundle target="link:C:/Users/recko/DSH/plugins/dsh-tool-b
 
 底部常驻一行状态：学习进度、本轮改动提示。
 
+### 内置方案是怎么来的
+
+内置方案不写死工具名，只写**规则**：覆盖哪些「组」（session/shell/fs/web/…）和哪些「插件」（`dsh-ops`、`dsh-free-search`、`dsh-image-gen`…）。组和插件的划分每次打开面板时都从当前实机的工具清单现算（`ctx.tools.definitions()`），所以**装/卸插件后内置方案会自动跟着变**，不需要改代码或升级。
+
+六个内置方案：全部保留 / 只聊天 / 代码 + 文件 / 查资料 + 网页 / 图像 + 设计 / 办公文档。
+
+- **只聊天**：除了 `tool_budget`、`present`、`ask_user_question` 三个核心工具，其余全关。实测 110 个工具里留 3 个。
+- 其余方案按「组 + 插件」命中保留，命中不到的隐藏；精细调整（单工具/组/插件级别）始终可以覆盖方案。
+
 ## 方案的来源与生命周期
 
 | 来源 | 谁创建 | 可否改名/删除 | 应用方式 |

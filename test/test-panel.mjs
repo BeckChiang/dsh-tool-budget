@@ -121,7 +121,7 @@ const base = {
     { id: 'code', key: 'profile:code', origin: 'preset', source: 'builtin', deletable: false, kind: 'profile', builtin: true, packs: ['code'], groups: ['fs'], plugins: [], active: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'], diff: { hide: 1, show: 0, hideLabels: ['文件'], showLabels: [], same: false } },
     { id: 'code', key: 'pack:code', origin: 'preset', source: 'builtin', deletable: false, kind: 'pack', groups: ['fs'], plugins: [], chosen: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'], diff: { hide: 1, show: 0, hideLabels: ['文件'], showLabels: [], same: false } },
     { id: 'research', key: 'pack:research', origin: 'preset', source: 'builtin', deletable: false, kind: 'pack', groups: ['web'], plugins: [], chosen: false, impact: { kept: 1, off: 2 }, keptLabels: ['网页'], diff: { hide: 1, show: 0, hideLabels: ['网页'], showLabels: [], same: false } },
-    { id: 'learned-1', key: 'learned:learned-1', origin: 'learned', source: 'learned', candidate: true, deletable: true, kind: 'manual', name: '文件、命令', groups: ['fs'], plugins: [], annotate: '来自 6 个会话的常用组合，采用后才能勾选', active: false, chosen: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'], diff: { hide: 1, show: 0, hideLabels: ['文件'], showLabels: [], same: false } },
+    { id: 'learned-1', key: 'learned:learned-1', origin: 'learned', source: { sessions: 6, confidence: 0.9, workspace: '--C-Users-recko-DSH--' }, candidate: true, deletable: true, kind: 'manual', name: '文件、命令', groups: ['fs'], plugins: [], annotate: '来自 6 个会话的常用组合，采用后才能勾选', active: false, chosen: false, impact: { kept: 2, off: 1 }, keptLabels: ['文件'], diff: { hide: 1, show: 0, hideLabels: ['文件'], showLabels: [], same: false } },
   ],
   sessionState: { profileId: 'full', packs: ['everything'], planId: 'pack:mine' },
   levels: { read: 'normal', ops_bash: 'hidden', never_used: 'hidden' },
@@ -444,13 +444,23 @@ assert.ok(dom.window.document.querySelector('[data-plan-delete="pack:mine"]') !=
 assert.equal(dom.window.document.querySelector('[data-plan-delete="pack:code"]'), null, '内置方案不应有删除按钮')
 assert.ok(dom.window.document.querySelector('[data-dirty]') !== null, '改动未写回时要提示')
 assert.ok(dom.window.document.querySelector('[data-dirty-save]') !== null, '应能保存改动')
-for (const group of ['preset', 'saved']) {
+for (const group of ['preset', 'saved', 'learned']) {
   assert.ok(dom.window.document.querySelector(`[data-plan-group="${group}"]`) !== null, `${group} 方案组应存在`)
   assert.equal(dom.window.document.querySelector(`[data-plan-group="${group}"] [data-plan-group-toggle]`).getAttribute('aria-expanded'), 'true', `${group} 组默认展开`)
 }
-assert.equal(dom.window.document.querySelector('[data-plan-group="learned"]'), null, '学习候选不再重复出现在方案区')
-assert.equal(dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]'), null, '方案区不应再有学习候选行')
-assert.ok(dom.window.document.querySelector('[data-learning-copy="learned-a"]') !== null, '学习候选应出现在学习区的候选列表里')
+const learnedRow = dom.window.document.querySelector('[data-plan="manual:learned-1"]')
+assert.ok(learnedRow !== null, '学习候选要以方案行的形式出现')
+assert.ok(learnedRow.textContent.includes('学习生成'), '学习候选要有来源标签')
+assert.ok(learnedRow.textContent.includes('置信度'), '学习候选要显示置信度与来源')
+assert.equal(dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]').disabled, true, '学习候选必须先采用才能勾选')
+assert.ok(dom.window.document.querySelector('[data-plan-adopt="learned:learned-1"]') !== null, '学习候选要有采用按钮')
+assert.equal(dom.window.document.querySelector('[data-learning-copy="learned-a"]'), null, '学习区不再重复列出候选，避免与方案区双份')
+// 采用后候选变成普通方案、可勾选
+dom.window.document.querySelector('[data-plan-adopt="learned:learned-1"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+await flush(80)
+const adoptPost = posts.filter((item) => item.body.op === 'adopt').at(-1)
+assert.equal(adoptPost.body.packId, 'learned-1', '采用应提交学习包 id')
+assert.equal(dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]').disabled, false, '采用后应可勾选')
 const renameButton = dom.window.document.querySelector('[data-plan-rename="pack:mine"]')
 assert.ok(renameButton !== null, '用户保存的方案应能改名')
 renameButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
