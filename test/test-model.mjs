@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 
 import { MODES, BudgetStore, resolveLevels, planHash, protectionOf, togglePack, normalizePacks, profileFromSession, BUILTIN_PACKS, CORE_ALWAYS , diffLevels } from '../lib/profiles.js'
-import { sessionAdjustments } from '../lib/learning.js'
+import { sessionAdjustments, Learner } from '../lib/learning.js'
 import { estimate, normalizeSettings, DEFAULT_SETTINGS, toolChars } from '../lib/cost.js'
 import { clusterPacks } from '../lib/learning.js'
 import { pluginOf, pluginLabel } from '../lib/classify.js'
@@ -218,4 +218,26 @@ console.log('test-model: all assertions passed')
   assert.equal(store.modeOf('s3'), 'auto', '会话可覆盖全局模式')
   assert.equal(store.modeOf('s2'), 'off', '其它会话仍用全局默认')
   console.log('ok 4.7 modes')
+}
+
+// 4.8 学习候选按工作区过滤
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-learn-'))
+  const file = path.join(dir, 'learning.json')
+  fs.writeFileSync(file, JSON.stringify({
+    version: 2,
+    status: 'ready',
+    packs: [
+      { id: 'a', name: 'A组', workspace: 'ws-a', groups: [], source: { sessions: 5, confidence: 0.9 } },
+      { id: 'b', name: 'B组', workspace: 'ws-b', groups: [], source: { sessions: 4, confidence: 0.8 } },
+      { id: 'c', name: '旧包', groups: [], source: { sessions: 3, confidence: 0.7 } },
+    ],
+  }))
+  const learner = new Learner({ root: dir, file })
+  const scoped = learner.status({ workspace: 'ws-a' })
+  assert.deepEqual(scoped.packs.map((pack) => pack.id), ['a', 'c'], '只保留本工作区与无工作区标记的旧包')
+  assert.equal(learner.status({ workspace: 'ws-b' }).packs.length, 2, '切到另一个工作区时换成那边的包')
+  assert.equal(learner.status().packs.length, 3, '不传工作区时不过滤')
+  fs.rmSync(dir, { recursive: true, force: true })
+  console.log('ok 4.8 learning workspace scope')
 }

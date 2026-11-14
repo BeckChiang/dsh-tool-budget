@@ -864,7 +864,7 @@ export function apply(ctx, config) {
       coreTools: CORE_ALWAYS,
     })
     const planItems = sessionLearning.items.map((item) => ({ ...item, tokens: charsOfGroup(item.group) }))
-    const learned = (learner.status().packs ?? []).filter((pack) => pack.adopted !== true)
+    const learned = (learner.status({ workspace: workspaceOf(sessionId) }).packs ?? []).filter((pack) => pack.adopted !== true)
     const learnedPlans = learned.map((pack) => {
       const groupSet = new Set(pack.groups ?? [])
       const targetLevels = new Map(
@@ -919,7 +919,7 @@ export function apply(ctx, config) {
       sessionLearning: { ...sessionLearning, items: planItems },
       learnTurns: Number(store.preferences().learnTurns ?? 3),
       usageReady: usage !== null,
-      learning: learner.status(),
+      learning: learner.status({ workspace: workspaceOf(sessionId) }),
       cost: costFor(sessionId, catalog, levels),
       updatedAt: new Date().toISOString(),
     }
