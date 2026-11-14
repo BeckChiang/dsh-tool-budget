@@ -521,6 +521,13 @@ export function apply(ctx, config) {
   }
 
   // 会话进行到第几轮：数日志里的 turn/start 记录（同一文件按 size+mtime 缓存）。
+  // 会话日志所在的工作区目录名（~/.dsh/sessions/<workspace>/<session>/…），学习只在这个工作区里扫。
+  function workspaceOf(sessionId) {
+    const log = sessionLogOf(sessionId)
+    if (log === undefined) return null
+    return path.basename(path.dirname(path.dirname(log.file)))
+  }
+
   const cwdCache = new Map()
   // 当前会话真实的工作区目录：Host 进程的 cwd 是 profile 目录，拿它学出来的包会指错地方。
   function cwdOf(sessionId) {
@@ -1400,7 +1407,7 @@ export function apply(ctx, config) {
       const action = typeof body.action === 'string' ? body.action : 'start'
       if (action === 'start') {
         const target = canonicalSession(typeof body.session === 'string' ? body.session : '')
-        void learner.scan({ cwd: cwdOf(target), limit: 400 })
+        void learner.scan({ cwd: cwdOf(target), workspace: workspaceOf(target), limit: 400 })
         send(res, 202, { ok: true, ...learner.status() })
         return
       }

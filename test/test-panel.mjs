@@ -444,19 +444,13 @@ assert.ok(dom.window.document.querySelector('[data-plan-delete="pack:mine"]') !=
 assert.equal(dom.window.document.querySelector('[data-plan-delete="pack:code"]'), null, '内置方案不应有删除按钮')
 assert.ok(dom.window.document.querySelector('[data-dirty]') !== null, '改动未写回时要提示')
 assert.ok(dom.window.document.querySelector('[data-dirty-save]') !== null, '应能保存改动')
-for (const group of ['preset', 'saved', 'learned']) {
+for (const group of ['preset', 'saved']) {
   assert.ok(dom.window.document.querySelector(`[data-plan-group="${group}"]`) !== null, `${group} 方案组应存在`)
   assert.equal(dom.window.document.querySelector(`[data-plan-group="${group}"] [data-plan-group-toggle]`).getAttribute('aria-expanded'), 'true', `${group} 组默认展开`)
 }
-const learnedPick = dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]')
-assert.ok(learnedPick !== null, '学习候选也要出现在列表里')
-assert.equal(learnedPick.disabled, true, '学习候选必须「采用」后才能勾选')
-assert.ok(dom.window.document.querySelector('[data-plan-adopt="learned:learned-1"]') !== null, '学习候选应有采用按钮')
-dom.window.document.querySelector('[data-plan-adopt="learned:learned-1"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-await flush(80)
-const adoptPost = posts.filter((item) => item.body.op === 'adopt').at(-1)
-assert.equal(adoptPost.body.packId, 'learned-1', '采用应提交学习包 id')
-assert.equal(dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]').disabled, false, '采用后应可勾选')
+assert.equal(dom.window.document.querySelector('[data-plan-group="learned"]'), null, '学习候选不再重复出现在方案区')
+assert.equal(dom.window.document.querySelector('[data-plan-pick="learned:learned-1"]'), null, '方案区不应再有学习候选行')
+assert.ok(dom.window.document.querySelector('[data-learning-copy="learned-a"]') !== null, '学习候选应出现在学习区的候选列表里')
 const renameButton = dom.window.document.querySelector('[data-plan-rename="pack:mine"]')
 assert.ok(renameButton !== null, '用户保存的方案应能改名')
 renameButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
