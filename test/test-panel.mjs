@@ -138,7 +138,7 @@ const base = {
   mode: 'ask',
   modeActive: true,
   usageReady: true,
-  learning: { status: 'ready', finishedAt: '2026-11-13T15:00:00.000Z', packs: [{ id: 'learned-a', name: '文件、命令', source: { sessions: 6, confidence: 0.9 } }] },
+  learning: { status: 'ready', workspace: '--C-Users-recko-DSH--', finishedAt: '2026-11-13T15:00:00.000Z', packs: [{ id: 'learned-a', name: '文件、命令', source: { sessions: 6, confidence: 0.9 } }] },
   cost: {
     savedTokens: 120,
     repayTokens: 340,
@@ -327,7 +327,7 @@ assert.ok(text().includes('未用 2'), '工具栏应显示未用数量 2')
 // 分区顺序：成本 → 方案（建议板块已删除）
 const orderedText = text().replace(/\s+/g, '')
 const positionOf = (needle) => orderedText.indexOf(needle)
-assert.ok(positionOf('成本估算') >= 0 && positionOf('成本估算') < positionOf('勾选一个或多个方案'), '成本应排在方案之前')
+assert.ok(positionOf('成本估算') >= 0 && positionOf('成本估算') < positionOf('勾选后点'), '成本应排在方案之前')
 assert.equal(dom.window.document.querySelector('[data-section-toggle="suggest"]'), null, '建议板块应已从面板删除')
 assert.ok(orderedText.includes('+100token/轮'), `成本应显示净省数字，实际：${orderedText.slice(0, 80)}`)
 assert.ok(orderedText.includes('模式常驻20'), '成本应显示模式常驻开销')
