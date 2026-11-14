@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-budget",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Session-level tool budget for DeepSeek Harness: scene packs, group/plugin tiers, per-tool call counts, cost estimate and learning packs. Derived from dsh-tool-switch by suqing114.",
   "type": "module",
   "main": "index.js",
