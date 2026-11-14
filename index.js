@@ -521,6 +521,28 @@ export function apply(ctx, config) {
   }
 
   // 会话进行到第几轮：数日志里的 turn/start 记录（同一文件按 size+mtime 缓存）。
+  const cwdCache = new Map()
+  // 当前会话真实的工作区目录：Host 进程的 cwd 是 profile 目录，拿它学出来的包会指错地方。
+  function cwdOf(sessionId) {
+    const log = sessionLogOf(sessionId)
+    if (log === undefined) return process.cwd()
+    const cached = cwdCache.get(sessionId)
+    if (cached !== undefined && cached.size === log.size && cached.mtime === log.mtime) return cached.cwd
+    let cwd = process.cwd()
+    try {
+      const text = decodeLog(fs.readFileSync(log.file))
+      const first = text.split('\n').find((line) => line.trim() !== '')
+      if (first !== undefined) {
+        const record = JSON.parse(first)
+        if (typeof record?.data?.cwd === 'string' && record.data.cwd !== '') cwd = record.data.cwd
+      }
+    } catch {
+      /* 读不出来就退回进程 cwd */
+    }
+    cwdCache.set(sessionId, { size: log.size, mtime: log.mtime, cwd })
+    return cwd
+  }
+
   function turnsOf(sessionId) {
     const log = sessionLogOf(sessionId)
     if (log === undefined) return 0
@@ -1377,7 +1399,8 @@ export function apply(ctx, config) {
       const body = await readJsonBody(req)
       const action = typeof body.action === 'string' ? body.action : 'start'
       if (action === 'start') {
-        void learner.scan({ cwd: process.cwd() })
+        const target = canonicalSession(typeof body.session === 'string' ? body.session : '')
+        void learner.scan({ cwd: cwdOf(target), limit: 400 })
         send(res, 202, { ok: true, ...learner.status() })
         return
       }
