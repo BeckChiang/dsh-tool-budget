@@ -636,8 +636,8 @@ export function apply(ctx, config) {
    */
   function dirtyOf(sessionId, catalog, levels) {
     const session = sessionOf(sessionId)
-    const key = session.planId
-    if (typeof key !== 'string' || key === '') return { active: false, count: 0 }
+    // 没有选方案时，基线就是「全部保留」：这时候的改动同样值得提示，保存只能另存为新方案。
+    const key = typeof session.planId === 'string' && session.planId !== '' ? session.planId : 'pack:everything'
     const plan = planSessionOf(key)
     if (plan === null) return { active: false, count: 0 }
     const base = resolveLevels({ session: { ...plan, profileId: 'full' }, catalog: catalog.tools, packs: store.packs() }).levels
@@ -1153,8 +1153,14 @@ export function apply(ctx, config) {
     if (op === 'discardDirty') {
       const session = sessionOf(sessionId)
       const key = session.planId
+      if (typeof key !== 'string' || key === '') {
+        // 没有方案时，放弃改动就是回到「全部保留」。
+        store.patchSession(sessionId, { packs: ['everything'], levels: {}, groupLevels: {}, pluginLevels: {}, profileId: 'full' })
+        syncSession(sessionId)
+        return { ok: true, key: 'pack:everything' }
+      }
       const plan = planSessionOf(key)
-      if (plan === null) return { ok: false, error: t('err.noMatch', { needle: String(key ?? '') }) }
+      if (plan === null) return { ok: false, error: t('err.noMatch', { needle: String(key) }) }
       store.patchSession(sessionId, { ...plan, profileId: 'full', planId: key })
       syncSession(sessionId)
       return { ok: true, key }
