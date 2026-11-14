@@ -138,7 +138,7 @@ const base = {
   mode: 'ask',
   modeActive: true,
   usageReady: true,
-  builtins: { total: 110, changed: true, added: 2, removed: 1, deltas: { code: 2 } },
+  builtins: { total: 110, changed: true, added: 2, removed: 1, deltas: { code: 2 }, lastChange: { at: '2026-11-14T03:00:00.000Z', added: 2, removed: 1 } },
   learning: { status: 'ready', workspace: '--C-Users-recko-DSH--', finishedAt: '2026-11-13T15:00:00.000Z', packs: [{ id: 'learned-a', name: '文件、命令', source: { sessions: 6, confidence: 0.9 } }] },
   cost: {
     savedTokens: 120,

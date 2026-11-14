@@ -901,7 +901,12 @@ export function apply(ctx, config) {
     const mode = store.modeOf(sessionId)
     const builtins = builtinSnapshot(catalog.tools, store)
     if (builtins.changed) {
-      store.setBuiltins({ ...builtins.snapshot, at: new Date().toISOString() })
+      const at = new Date().toISOString()
+      store.setBuiltins({
+        ...builtins.snapshot,
+        at,
+        lastChange: { at, added: builtins.added.length, removed: builtins.removed.length, addedNames: builtins.added.slice(0, 5), removedNames: builtins.removed.slice(0, 5), deltas: builtins.deltas },
+      })
     }
     return {
       ok: true,
@@ -936,6 +941,7 @@ export function apply(ctx, config) {
         removedNames: builtins.removed.slice(0, 5),
         deltas: builtins.deltas,
         impacts: builtins.impacts,
+        lastChange: builtins.changed ? { at: new Date().toISOString(), added: builtins.added.length, removed: builtins.removed.length } : builtins.lastChange,
       },
       cost: costFor(sessionId, catalog, levels),
       updatedAt: new Date().toISOString(),
@@ -1286,8 +1292,9 @@ export function apply(ctx, config) {
       const catalog = catalogOf(sessionId)
       const builtins = builtinSnapshot(catalog.tools, store)
       const at = new Date().toISOString()
-      store.setBuiltins({ ...builtins.snapshot, at })
-      return { ok: true, refreshed: true, at, changed: builtins.changed, added: builtins.added.length, removed: builtins.removed.length, deltas: builtins.deltas, impacts: builtins.impacts }
+      const lastChange = { at, added: builtins.added.length, removed: builtins.removed.length, addedNames: builtins.added.slice(0, 5), removedNames: builtins.removed.slice(0, 5), deltas: builtins.deltas }
+      store.setBuiltins({ ...builtins.snapshot, at, lastChange })
+      return { ok: true, refreshed: true, at, changed: builtins.changed, added: builtins.added.length, removed: builtins.removed.length, deltas: builtins.deltas, impacts: builtins.impacts, lastChange }
     }
     if (op === 'learnTurns') {
       const value = Number(body.turns)
