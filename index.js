@@ -21,10 +21,10 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { UsageIndex, decodeLog } from './lib/usage.js'
-import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, profileFromSession, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
+import { BudgetStore, resolveLevels, planHash, protectionOf, profileFromSession, diffLevels, normalizePacks, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
 import { pluginOf, pluginLabel } from './lib/classify.js'
 import { estimate, normalizeSettings, toolChars, DEFAULT_SETTINGS } from './lib/cost.js'
-import { Learner } from './lib/learning.js'
+import { Learner, sessionAdjustments } from './lib/learning.js'
 import { makeT, normalizeLocale, setLocale } from './lib/i18n.js'
 
 export const name = 'dsh-tool-budget'
@@ -144,6 +144,9 @@ export function apply(ctx, config) {
 
   /** sessionId -> 活着的 agent */
   const live = new Map()
+  // 本轮学习的数据：被降权拦下的调用次数，以及会话进行到第几轮。
+  const blockedCounts = new Map()
+  const turnsCache = new Map()
   /** sessionId -> { signature, dispose } */
   const installed = new Map()
   /** sessionId -> 最近一次 /usage 结果（给建议集与面板复用） */
@@ -284,6 +287,15 @@ export function apply(ctx, config) {
   }
 
   /**
+   * 「不使用」模式：插件完全不介入。存储的方案与级别原样保留，
+   * 但对外一律按 normal 处理——不遮罩、不降权、不省 token。
+   */
+  function effectiveLevels(sessionId, levels) {
+    if (store.modeOf(sessionId) !== 'off') return levels
+    return new Map([...levels.keys()].map((name) => [name, 'normal']))
+  }
+
+  /**
    * 重算并重装该会话的 restrict + guard。
    * 只有 allow 集合或降权集合变化才真的动注册表：每次重装都会让提示词前缀
    * 失效一次，抖动一次就是一次重付费。
@@ -295,7 +307,8 @@ export function apply(ctx, config) {
       return
     }
     const catalog = catalogOf(sessionId)
-    const { levels } = levelsOf(sessionId, catalog)
+    const { levels: storedLevels } = levelsOf(sessionId, catalog)
+    const levels = effectiveLevels(sessionId, storedLevels)
     const restrictable = restrictableOf(agent)
     const allow = []
     const discouraged = new Set()
@@ -305,7 +318,7 @@ export function apply(ctx, config) {
       allow.push(name)
       if (level === 'warn') discouraged.add(name)
     }
-    const signature = `${allow.slice().sort().join('\u0000')}|warn:${[...discouraged].sort().join(',')}`
+    const signature = `${allow.slice().sort().join('\u0000')}|warn:${[...discouraged].sort().join(',')}|mode:${store.modeOf(sessionId)}`
     const current = installed.get(sessionId)
     if (current !== undefined && current.signature === signature) return
     if (current !== undefined) {
@@ -331,6 +344,9 @@ export function apply(ctx, config) {
           agent.ctx.tools.guard((execution) => {
             const toolName = execution?.name
             if (typeof toolName !== 'string' || !discouraged.has(toolName)) return undefined
+            const bucket = blockedCounts.get(sessionId) ?? new Map()
+            bucket.set(toolName, (bucket.get(toolName) ?? 0) + 1)
+            blockedCounts.set(sessionId, bucket)
             return t('warn.reason', { target: toolName })
           }),
         )
@@ -495,6 +511,25 @@ export function apply(ctx, config) {
     return value
   }
 
+  // 会话进行到第几轮：数日志里的 turn/start 记录（同一文件按 size+mtime 缓存）。
+  function turnsOf(sessionId) {
+    const log = sessionLogOf(sessionId)
+    if (log === undefined) return 0
+    const cached = turnsCache.get(sessionId)
+    if (cached !== undefined && cached.size === log.size && cached.mtime === log.mtime) return cached.turns
+    let turns = 0
+    try {
+      const text = decodeLog(fs.readFileSync(log.file))
+      for (const line of text.split('\n')) {
+        if (line.includes('"turn/start"')) turns += 1
+      }
+    } catch (error) {
+      warn(`counting turns failed (${sessionId})`, error)
+    }
+    turnsCache.set(sessionId, { turns, size: log.size, mtime: log.mtime })
+    return turns
+  }
+
   // --- 成本 ---------------------------------------------------------------
 
   function costFor(sessionId, catalog, levels) {
@@ -510,7 +545,7 @@ export function apply(ctx, config) {
     const mode = store.modeOf(sessionId)
     // 常驻开销是三种模式的固有代价（ask/pin 的固定提示行、auto 的自愈说明），
     // 属于实现事实而非用户偏好，所以不开放修改。
-    const overheadTokens = mode === 'auto' ? DEFAULT_SETTINGS.modeAutoOverhead : DEFAULT_SETTINGS.modeQuietOverhead
+    const overheadTokens = mode === 'off' ? 0 : mode === 'auto' ? DEFAULT_SETTINGS.modeAutoOverhead : DEFAULT_SETTINGS.modeQuietOverhead
     const result = estimate({
       hiddenChars,
       contextTokens: context.contextTokens,
@@ -540,6 +575,77 @@ export function apply(ctx, config) {
     return chosen.includes(packId)
   }
 
+  // --- 方案组合 -----------------------------------------------------------
+  // 方案键：profile:<id>（保存的方案）或 pack:<id>（场景包 / 学习包 / 副本）。
+
+  function planSessionOf(key) {
+    const [kind, id] = String(key ?? '').split(':')
+    if (kind === 'profile') {
+      const profile = store.profiles().find((item) => item.id === id)
+      if (profile === undefined) return null
+      return {
+        packs: [...(profile.packs ?? [])],
+        levels: { ...(profile.levels ?? {}) },
+        groupLevels: { ...(profile.groupLevels ?? {}) },
+        pluginLevels: { ...(profile.pluginLevels ?? {}) },
+      }
+    }
+    if (kind === 'pack') {
+      const pack = store.pack(id)
+      if (pack === null) return null
+      return { packs: [pack.id], levels: {}, groupLevels: {}, pluginLevels: {} }
+    }
+    return null
+  }
+
+  // 勾选的若干方案合并成一个会话状态：包取并集，精细调整按勾选顺序叠加（后勾的覆盖先勾的）。
+  function combinePlans(keys) {
+    const packs = []
+    const levels = {}
+    const groupLevels = {}
+    const pluginLevels = {}
+    for (const key of keys) {
+      const plan = planSessionOf(key)
+      if (plan === null) continue
+      for (const id of plan.packs) if (!packs.includes(id)) packs.push(id)
+      Object.assign(levels, plan.levels)
+      Object.assign(groupLevels, plan.groupLevels)
+      Object.assign(pluginLevels, plan.pluginLevels)
+    }
+    const keepAll = store.packs()[0]?.id
+    let normalized = packs.filter((id, index) => packs.indexOf(id) === index)
+    if (keepAll !== undefined && normalized.includes(keepAll) && normalized.length > 1) {
+      normalized = normalized.filter((id) => id !== keepAll)
+    }
+    normalized = normalizePacks(normalized, store.packs().map((item) => item.id))
+    return { packs: normalized, levels, groupLevels, pluginLevels }
+  }
+
+  /**
+   * 当前会话和它选中的方案差了多少：用于「已改动 N 处 · 保存 / 放弃」。
+   * 只有保存过的方案可回写；预设包与预设方案只能另存为新方案。
+   */
+  function dirtyOf(sessionId, catalog, levels) {
+    const session = sessionOf(sessionId)
+    const key = session.planId
+    if (typeof key !== 'string' || key === '') return { active: false, count: 0 }
+    const plan = planSessionOf(key)
+    if (plan === null) return { active: false, count: 0 }
+    const base = resolveLevels({ session: { ...plan, profileId: 'full' }, catalog: catalog.tools, packs: store.packs() }).levels
+    const diff = diffLevels(effectiveLevels(sessionId, base), levels)
+    const names = [...diff.hide, ...diff.show]
+    const profile = key.startsWith('profile:') ? store.profile(key.slice('profile:'.length)) : null
+    return {
+      active: true,
+      key,
+      count: names.length,
+      hide: diff.hide.length,
+      show: diff.show.length,
+      names: names.slice(0, 6),
+      mutable: profile !== null && profile.kind !== 'builtin',
+    }
+  }
+
   // --- 面板状态 -----------------------------------------------------------
 
   function buildState(sessionId, options) {
@@ -547,7 +653,8 @@ export function apply(ctx, config) {
     const catalog = catalogOf(sessionId)
     const session = sessionOf(sessionId)
     const packs = store.packs()
-    const { levels, activePacks } = levelsOf(sessionId, catalog)
+    const { levels: storedLevels, activePacks } = levelsOf(sessionId, catalog)
+    const levels = effectiveLevels(sessionId, storedLevels)
     const usage = usageCache.get(sessionId) ?? null
     const groups = new Map()
     const plugins = new Map()
@@ -626,35 +733,129 @@ export function apply(ctx, config) {
       return { kept, off }
     }
     const labelList = (resolved) => resolved.groups.filter((group) => group !== '*').map((group) => groupLabels.get(group) ?? group)
-    const rawSuggestions = suggestions({ catalog: catalog.tools, usage: usage?.usage, levels })
+    const blocked = blockedCounts.get(sessionId) ?? new Map()
+    const turns = turnsOf(sessionId)
     const charsByGroup = new Map()
     for (const tool of catalog.tools) {
       const chars = toolChars({ name: tool.name, description: tool.detail || tool.description })
       charsByGroup.set(tool.group, (charsByGroup.get(tool.group) ?? 0) + chars)
     }
     const tokenSettings = normalizeSettings(store.preferences().cost)
-    const decorate = (item) => ({
-      ...item,
-      label: groupLabels.get(item.group) ?? item.group,
-      tokens: Math.round((charsByGroup.get(item.group) ?? 0) / tokenSettings.charsPerToken),
-    })
-    const plans = [
+    const charsOfGroup = (groupId) => Math.round((charsByGroup.get(groupId) ?? 0) / tokenSettings.charsPerToken)
+    // 每个方案套用之后会是什么样：用来回答「它和现在有没有区别、差在哪」。
+    const groupOfName = new Map(catalog.tools.map((tool) => [tool.name, tool.groupLabel]))
+    const labelsOf = (names) => {
+      const seen = new Set()
+      for (const name of names) seen.add(groupOfName.get(name) ?? name)
+      return [...seen].slice(0, 4)
+    }
+    const diffOf = (planSession) => {
+      const target = resolveLevels({ session: planSession, catalog: catalog.tools, packs }).levels
+      const diff = diffLevels(levels, target)
+      return { hide: diff.hide.length, show: diff.show.length, hideLabels: labelsOf(diff.hide), showLabels: labelsOf(diff.show), same: diff.same }
+    }
+    const basePlans = [
       ...store.profiles().map((profile) => {
         const resolved = expandPlan(profile)
-        return { ...profile, kind: 'profile', builtin: profile.kind === 'builtin', active: profile.id === (session.profileId ?? 'full'), impact: impactOf(resolved), keptLabels: labelList(resolved) }
+        const planSession = {
+          profileId: profile.id,
+          packs: [...(profile.packs ?? [])],
+          levels: { ...(profile.levels ?? {}) },
+          groupLevels: { ...(profile.groupLevels ?? {}) },
+          pluginLevels: { ...(profile.pluginLevels ?? {}) },
+        }
+        return {
+          ...profile,
+          key: `profile:${profile.id}`,
+          kind: 'profile',
+          builtin: profile.kind === 'builtin',
+          source: profile.kind === 'builtin' ? 'builtin' : 'saved',
+          origin: profile.kind === 'builtin' ? 'preset' : 'saved',
+          candidate: false,
+          deletable: profile.kind !== 'builtin',
+          groups: resolved.groups,
+          plugins: resolved.plugins,
+          active: profile.id === (session.profileId ?? 'full'),
+          impact: impactOf(resolved),
+          keptLabels: labelList(resolved),
+          diff: diffOf(planSession),
+        }
       }),
       ...packs.map((pack) => {
         const resolved = expandPlan(pack)
+        // 选包 = 按预设重来（清空精细调整），diff 必须按同样的语义算。
+        const planSession = {
+          profileId: 'full',
+          packs: [pack.id],
+          levels: {},
+          groupLevels: {},
+          pluginLevels: {},
+        }
         return {
           ...pack,
+          key: `pack:${pack.id}`,
           kind: pack.kind === 'learned' ? 'learned' : pack.kind === 'manual' ? 'manual' : 'pack',
+          source: pack.kind === 'learned' ? 'learned' : pack.kind === 'manual' ? 'saved' : 'builtin',
+          origin: pack.kind === 'builtin' || pack.kind === undefined ? 'preset' : 'saved',
+          candidate: false,
+          deletable: pack.kind !== 'builtin' && pack.kind !== undefined,
+          groups: resolved.groups,
+          plugins: resolved.plugins,
           active: activePacks.includes(pack.id),
           chosen: chosenPackIds(session, pack.id),
           impact: impactOf(resolved),
           keptLabels: labelList(resolved),
+          diff: diffOf(planSession),
         }
       }),
     ]
+
+    // 本轮学习的候选：由「被降权拦下过的工具」与「一次没调用过的组」推出来，
+    // 只给建议，采用后才会变成普通方案，也才能被勾选。
+    const sessionLearning = sessionAdjustments({
+      groups: orderedGroups.map((group) => ({ id: group.id, label: group.label, tools: group.tools.map((tool) => tool.name) })),
+      calls: Object.fromEntries(catalog.tools.map((tool) => [tool.name, usage?.usage?.[tool.name] ?? 0])),
+      blocked: Object.fromEntries(blocked),
+      levels,
+      turns,
+      thresholdTurns: Number(store.preferences().learnTurns ?? 3),
+      protectedTools: PROTECTED,
+      coreTools: CORE_ALWAYS,
+    })
+    const planItems = sessionLearning.items.map((item) => ({ ...item, tokens: charsOfGroup(item.group) }))
+    const learned = (learner.status().packs ?? []).filter((pack) => pack.adopted !== true)
+    const learnedPlans = learned.map((pack) => {
+      const groupSet = new Set(pack.groups ?? [])
+      const targetLevels = new Map(
+        catalog.tools.map((tool) => [tool.name, groupSet.has('*') || groupSet.has(tool.group) ? 'normal' : 'hidden']),
+      )
+      const diff = diffLevels(levels, targetLevels)
+      const resolved = { groups: [...groupSet], plugins: [...(pack.plugins ?? [])] }
+      return {
+        ...pack,
+        key: `learned:${pack.id}`,
+        kind: 'learned',
+        origin: 'learned',
+        candidate: true,
+        annotate: t('plan.candidateNote', { sessions: pack.source?.sessions ?? 0 }),
+        active: false,
+        chosen: false,
+        deletable: false,
+        groups: resolved.groups,
+        plugins: resolved.plugins,
+        impact: impactOf(resolved),
+        keptLabels: labelList(resolved),
+        diff: { hide: diff.hide.length, show: diff.show.length, hideLabels: labelsOf(diff.hide), showLabels: labelsOf(diff.show), same: diff.same },
+      }
+    })
+    // 同一个方案键只留一条：学习候选重复、或某个包同时出现在两组里时不让面板出现双份。
+    const seenKeys = new Set()
+    const plans = [...basePlans, ...learnedPlans].filter((plan) => {
+      const key = plan.key
+      if (seenKeys.has(key)) return false
+      seenKeys.add(key)
+      return true
+    })
 
     const mode = store.modeOf(sessionId)
     return {
@@ -662,6 +863,7 @@ export function apply(ctx, config) {
       session: sessionId,
       live: live.has(sessionId),
       mode,
+      modeActive: mode !== 'off',
       locale: store.preferences().locale,
       preferences: store.preferences(),
       counts: { total: catalog.tools.length, enabled, hidden, warned, core, locked },
@@ -672,7 +874,9 @@ export function apply(ctx, config) {
       sessionState: { profileId: session.profileId ?? 'full', packs: session.packs ?? [], groupLevels: session.groupLevels ?? {}, pluginLevels: session.pluginLevels ?? {} },
       levels: Object.fromEntries(levels),
       plans,
-      suggestions: { sleep: rawSuggestions.sleep.map(decorate), wake: rawSuggestions.wake.map(decorate) },
+      dirty: dirtyOf(sessionId, catalog, levels),
+      sessionLearning: { ...sessionLearning, items: planItems },
+      learnTurns: Number(store.preferences().learnTurns ?? 3),
       usageReady: usage !== null,
       learning: learner.status(),
       cost: costFor(sessionId, catalog, levels),
@@ -758,6 +962,25 @@ export function apply(ctx, config) {
     return { names: [], error: t('err.noMatch', { needle }) }
   }
 
+  // 方案被选中后，工具列表里的调整直接写回这个方案（用户决策：直接回写）。
+  // 预设方案是只读的，回写只对「用户保存的方案」生效。
+  function writeBackLevels(sessionId, mutate, enabled) {
+    if (enabled !== true) return null
+    const session = sessionOf(sessionId)
+    const planId = session.planId
+    if (typeof planId !== 'string' || !planId.startsWith('profile:')) return null
+    const profile = store.profile(planId.slice('profile:'.length))
+    if (profile === null || profile.kind === 'builtin') return null
+    const draft = {
+      levels: { ...(profile.levels ?? {}) },
+      groupLevels: { ...(profile.groupLevels ?? {}) },
+      pluginLevels: { ...(profile.pluginLevels ?? {}) },
+    }
+    mutate(draft)
+    store.addProfile({ ...profile, ...draft })
+    return profile.id
+  }
+
   function setLevel(sessionId, names, level, options) {
     const confirm = options?.confirm === true
     const blocked = []
@@ -784,8 +1007,14 @@ export function apply(ctx, config) {
       else levels[toolName] = level
     }
     store.patchSession(sessionId, { levels })
+    const written = writeBackLevels(sessionId, (draft) => {
+      for (const toolName of accepted) {
+        if (level === 'normal') delete draft.levels[toolName]
+        else draft.levels[toolName] = level
+      }
+    }, options?.writeBack)
     syncSession(sessionId)
-    return { ok: true, changed: accepted.length, blocked }
+    return { ok: true, changed: accepted.length, blocked, planId: written }
   }
 
   // --- 变更操作 -----------------------------------------------------------
@@ -808,8 +1037,12 @@ export function apply(ctx, config) {
       if (level === 'normal') delete map[key]
       else map[key] = level
       store.patchSession(sessionId, { [mapKey]: map })
+      const written = writeBackLevels(sessionId, (draft) => {
+        if (level === 'normal') delete draft[mapKey][key]
+        else draft[mapKey][key] = level
+      }, body.writeBack)
       syncSession(sessionId)
-      return { ok: true }
+      return { ok: true, planId: written }
     }
     if (op === 'target') {
       const level = LEVELS.includes(body.level) ? body.level : 'hidden'
@@ -822,6 +1055,7 @@ export function apply(ctx, config) {
       if (profile === null) return { ok: false, error: t('err.noMatch', { needle: String(body.profileId ?? '') }) }
       store.patchSession(sessionId, {
         profileId: profile.id,
+        planId: `profile:${profile.id}`,
         packs: [...(profile.packs ?? [])],
         levels: { ...(profile.levels ?? {}) },
         groupLevels: { ...(profile.groupLevels ?? {}) },
@@ -833,11 +1067,29 @@ export function apply(ctx, config) {
     if (op === 'pack') {
       const pack = store.pack(String(body.packId ?? ''))
       if (pack === null) return { ok: false, error: t('err.noMatch', { needle: String(body.packId ?? '') }) }
-      const session = sessionOf(sessionId)
-      const packs = togglePack(session.packs ?? [], pack.id)
+      // 单选语义：点「应用」就是把这个方案设为当前，不切换、不清空别的包再拼组合。
+      // 之前用 toggle，点一个已选中的包会把它取消，界面就会看起来「选的」和「生效的」不一致。
+      const packs = [pack.id]
       // 选包就是「按这个预设重来」：之前逐个工具/分组/插件的精细调整一并清掉，
       // 否则会出现「选了全部保留但还有工具关着」。要保留调整就把它存成方案。
-      store.patchSession(sessionId, { packs, levels: {}, groupLevels: {}, pluginLevels: {} })
+      store.patchSession(sessionId, { packs, profileId: 'full', planId: `pack:${pack.id}`, levels: {}, groupLevels: {}, pluginLevels: {} })
+      syncSession(sessionId)
+      return { ok: true, packs }
+    }
+    if (op === 'planSet') {
+      // 多选组合：勾几个方案（场景包 / 学习包 / 保存的方案）就合并成一份，一次应用。
+      const keys = (Array.isArray(body.plans) ? body.plans.filter((item) => typeof item === 'string') : []).filter(
+        (key) => !key.startsWith('learned:'),
+      )
+      const combined = combinePlans(keys)
+      store.patchSession(sessionId, { ...combined, profileId: 'full', planId: keys.length === 1 ? keys[0] : null })
+      syncSession(sessionId)
+      return { ok: true, packs: combined.packs, plans: keys }
+    }
+    if (op === 'packSet') {
+      // 多选组合：一次写入一组包（并集生效），同样按「按预设重来」清掉精细调整。
+      const packs = normalizePacks(Array.isArray(body.packs) ? body.packs : [], store.packs().map((item) => item.id))
+      store.patchSession(sessionId, { packs, profileId: 'full', levels: {}, groupLevels: {}, pluginLevels: {} })
       syncSession(sessionId)
       return { ok: true, packs }
     }
@@ -874,6 +1126,101 @@ export function apply(ctx, config) {
       store.addPack({ ...pack, kind: 'learned', status: 'ready' })
       return { ok: true, pack }
     }
+    if (op === 'saveDirty') {
+      const session = sessionOf(sessionId)
+      const key = session.planId
+      if (typeof key !== 'string' || !key.startsWith('profile:')) return { ok: false, needSaveAs: true }
+      const profile = store.profile(key.slice('profile:'.length))
+      if (profile === null || profile.kind === 'builtin') return { ok: false, needSaveAs: true }
+      store.addProfile({
+        ...profile,
+        packs: [...(session.packs ?? [])],
+        levels: { ...(session.levels ?? {}) },
+        groupLevels: { ...(session.groupLevels ?? {}) },
+        pluginLevels: { ...(session.pluginLevels ?? {}) },
+      })
+      return { ok: true, key, name: profile.name }
+    }
+    if (op === 'discardDirty') {
+      const session = sessionOf(sessionId)
+      const key = session.planId
+      const plan = planSessionOf(key)
+      if (plan === null) return { ok: false, error: t('err.noMatch', { needle: String(key ?? '') }) }
+      store.patchSession(sessionId, { ...plan, profileId: 'full', planId: key })
+      syncSession(sessionId)
+      return { ok: true, key }
+    }
+    if (op === 'rename') {
+      const key = String(body.key ?? '')
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (name === '') return { ok: false, error: t('err.noMatch', { needle: key }) }
+      if (key.startsWith('profile:')) {
+        const profile = store.profile(key.slice('profile:'.length))
+        if (profile === null) return { ok: false, error: t('err.noMatch', { needle: key }) }
+        if (profile.kind === 'builtin') return { ok: false, error: t('err.core') }
+        store.addProfile({ ...profile, name })
+        return { ok: true, key, name }
+      }
+      if (key.startsWith('pack:')) {
+        const pack = store.pack(key.slice('pack:'.length))
+        if (pack === null) return { ok: false, error: t('err.noMatch', { needle: key }) }
+        if (pack.kind === 'builtin' || pack.kind === undefined) return { ok: false, error: t('err.core') }
+        store.addPack({ ...pack, name })
+        return { ok: true, key, name }
+      }
+      return { ok: false, error: t('err.noMatch', { needle: key }) }
+    }
+    if (op === 'savePlan') {
+      const keys = (Array.isArray(body.plans) ? body.plans.filter((item) => typeof item === 'string') : []).filter(
+        (key) => !key.startsWith('learned:'),
+      )
+      const session = sessionOf(sessionId)
+      const combined =
+        keys.length === 0 && body.fromSession === true
+          ? { packs: [...(session.packs ?? [])], levels: { ...(session.levels ?? {}) }, groupLevels: { ...(session.groupLevels ?? {}) }, pluginLevels: { ...(session.pluginLevels ?? {}) } }
+          : combinePlans(keys)
+      if (combined.packs.length === 0 && Object.keys(combined.levels).length === 0 && Object.keys(combined.groupLevels ?? {}).length === 0) {
+        return { ok: false, error: t('err.target', { verb: 'save' }) }
+      }
+      const catalog = catalogOf(sessionId)
+      const target = resolveLevels({ session: { ...sessionOf(sessionId), ...combined, profileId: 'full' }, catalog: catalog.tools, packs: store.packs() })
+      const hash = planHash(target.levels)
+      const duplicate = store.profiles().find((profile) => {
+        if (profile.kind === 'builtin') return false
+        return planHash(resolveLevels({ session: { ...profile, profileId: 'full' }, catalog: catalog.tools, packs: store.packs() }).levels) === hash
+      })
+      if (duplicate !== undefined && body.force !== true) {
+        return { ok: false, needConfirm: true, duplicate: { key: `profile:${duplicate.id}`, name: duplicate.name } }
+      }
+      const id = `manual-${Date.now()}`
+      const profile = { id, kind: 'manual', name: typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : t('plan.savedName', { n: keys.length }), packs: [...combined.packs], levels: { ...combined.levels }, groupLevels: { ...combined.groupLevels }, pluginLevels: { ...combined.pluginLevels } }
+      store.addProfile(profile)
+      store.patchSession(sessionId, { ...combined, planId: `profile:${id}`, profileId: id })
+      syncSession(sessionId)
+      return { ok: true, key: `profile:${id}`, name: profile.name }
+    }
+    if (op === 'adopt') {
+      const learning = learner.status()
+      const pack = (learning.packs ?? []).find((item) => item.id === body.packId)
+      if (pack === undefined) return { ok: false, error: t('err.noMatch', { needle: String(body.packId ?? '') }) }
+      const adopted = {
+        id: `manual-${Date.now()}`,
+        kind: 'manual',
+        name: typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : pack.name ?? pack.id,
+        groups: [...(pack.groups ?? [])],
+        plugins: [...(pack.plugins ?? [])],
+        derivedFrom: pack.id,
+      }
+      store.addPack(adopted)
+      learner.markAdopted?.(pack.id)
+      return { ok: true, key: `pack:${adopted.id}`, name: adopted.name }
+    }
+    if (op === 'learnTurns') {
+      const value = Number(body.turns)
+      if (!Number.isFinite(value) || value < 1 || value > 20) return { ok: false, error: t('err.action', { action: String(body.turns ?? '') }) }
+      store.setPreferences({ learnTurns: Math.round(value) })
+      return { ok: true, learnTurns: Math.round(value) }
+    }
     if (op === 'mode') {
       const mode = MODES.includes(body.mode) ? body.mode : null
       if (mode === null) return { ok: false, error: t('err.action', { action: String(body.mode ?? '') }) }
@@ -883,7 +1230,7 @@ export function apply(ctx, config) {
       return { ok: true, mode }
     }
     if (op === 'reset') {
-      store.patchSession(sessionId, { levels: {}, groupLevels: {}, pluginLevels: {}, packs: ['everything'], profileId: 'full' })
+      store.patchSession(sessionId, { levels: {}, groupLevels: {}, pluginLevels: {}, packs: ['everything'], profileId: 'full', planId: null })
       syncSession(sessionId)
       return { ok: true }
     }
@@ -959,19 +1306,41 @@ export function apply(ctx, config) {
   }
 
   const costHandler = async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      methodNotAllowed(res, 'GET, HEAD')
+    const url = new URL(req.url ?? COST_ROUTE, 'http://localhost')
+    // POST 用来预览「换上勾选的方案之后」的成本：仍然按当前模式的常驻开销算，
+    // 但省下的 token 与首轮重付都按目标级别重算。
+    if (req.method === 'POST') {
+      let body
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        send(res, 400, { ok: false, error: String(error?.message ?? error) })
+        return
+      }
+      const sessionId = canonicalSession(String(body.session ?? url.searchParams.get('session') ?? ''))
+      if (sessionId.length === 0) {
+        send(res, 400, { ok: false, error: t('err.missingSession') })
+        return
+      }
+      const catalog = catalogOf(sessionId)
+      const keys = Array.isArray(body.plans) ? body.plans.filter((item) => typeof item === 'string') : []
+      const combined = combinePlans(keys)
+      const target = resolveLevels({ session: { ...sessionOf(sessionId), ...combined }, catalog: catalog.tools, packs: store.packs() }).levels
+      send(res, 200, { ok: true, pending: true, plans: keys, ...costFor(sessionId, catalog, effectiveLevels(sessionId, target)) })
       return
     }
-    const url = new URL(req.url ?? COST_ROUTE, 'http://localhost')
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      methodNotAllowed(res, 'GET, HEAD, POST')
+      return
+    }
     const sessionId = canonicalSession(url.searchParams.get('session') ?? '')
     if (sessionId.length === 0) {
       send(res, 400, { ok: false, error: t('err.missingSession') })
       return
     }
     const catalog = catalogOf(sessionId)
-    const { levels } = levelsOf(sessionId, catalog)
-    send(res, 200, { ok: true, ...costFor(sessionId, catalog, levels) })
+    const { levels: storedLevels } = levelsOf(sessionId, catalog)
+    send(res, 200, { ok: true, ...costFor(sessionId, catalog, effectiveLevels(sessionId, storedLevels)) })
   }
 
   const learningHandler = async (req, res) => {
@@ -1087,6 +1456,8 @@ export function apply(ctx, config) {
       }
       toolDispose = null
     }
+    // 「不使用」：不注册工具入口，提示词里不留任何痕迹；面板与 /budget 仍可用。
+    if (store.preferences().mode === 'off') return
     try {
       toolDispose = ctx.tools.register(definition())
     } catch (error) {

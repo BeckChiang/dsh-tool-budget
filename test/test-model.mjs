@@ -3,7 +3,8 @@
 
 import assert from 'node:assert/strict'
 
-import { BudgetStore, resolveLevels, suggestions, protectionOf, togglePack, profileFromSession, BUILTIN_PACKS, CORE_ALWAYS } from '../lib/profiles.js'
+import { MODES, BudgetStore, resolveLevels, planHash, protectionOf, togglePack, normalizePacks, profileFromSession, BUILTIN_PACKS, CORE_ALWAYS , diffLevels } from '../lib/profiles.js'
+import { sessionAdjustments } from '../lib/learning.js'
 import { estimate, normalizeSettings, DEFAULT_SETTINGS, toolChars } from '../lib/cost.js'
 import { clusterPacks } from '../lib/learning.js'
 import { pluginOf, pluginLabel } from '../lib/classify.js'
@@ -62,20 +63,20 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
-// 3. 建议集：从没被用过的组建议休眠，被挡住却有用的组建议恢复，受保护组不动
+// 3. 本轮学习（被拦下的恢复 / 没调用的休眠）+ 方案查重
 {
   const levels = new Map(catalog.map((tool) => [tool.name, tool.group === 'web' ? 'hidden' : 'normal']))
-  const usage = {
-    read: { d30: 3 },
-    pwsh: { d30: 5 },
-    web_search: { d30: 9 },
-    ops_bash: { d30: 1 },
-  }
-  const result = suggestions({ catalog, usage, levels })
-  const sleepGroups = result.sleep.map((item) => item.group)
-  assert.ok(!sleepGroups.includes('fs'), 'fs 有调用，不该建议休眠')
-  assert.ok(!sleepGroups.includes('toolchain'), 'toolchain 含受保护工具，不该建议休眠')
-  assert.ok(result.wake.some((item) => item.group === 'web'), 'web 被隐藏但有用，应建议恢复')
+  const groups = [
+    { id: 'web', label: '网络检索', tools: ['web_search'] },
+    { id: 'fs', label: '文件与检索', tools: ['read'] },
+  ]
+  const result = sessionAdjustments({ groups, calls: { web_search: 0, read: 3 }, blocked: { web_search: 2 }, levels, turns: 5, thresholdTurns: 3 })
+  assert.ok(result.items.some((item) => item.kind === 'restore' && item.group === 'web'), '被拦下的组应建议恢复')
+  assert.ok(!result.items.some((item) => item.group === 'fs'), '有调用的组不该建议休眠')
+  const early = sessionAdjustments({ groups, calls: {}, blocked: {}, levels, turns: 2, thresholdTurns: 3 })
+  assert.equal(early.ready, false, '不到轮次阈值不给建议')
+  assert.equal(planHash(new Map([['a', 'normal'], ['b', 'hidden']])), 'b=hidden')
+  assert.equal(planHash({ a: 'warn', b: 'normal' }), 'a=warn')
 }
 
 // 4. 成本公式：省 / 重付 / 回本
@@ -99,6 +100,14 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
   assert.deepEqual(togglePack(['core'], 'core'), ['everything'], '点掉最后一个包回到全部保留')
   assert.deepEqual(togglePack([], 'code'), ['code'])
   assert.deepEqual(togglePack(['core'], 'everything'), ['everything'], '点全部保留清空其它包')
+  // 多选组合：union 语义
+  const known = BUILTIN_PACKS.map((item) => item.id)
+  assert.deepEqual(normalizePacks(['code', 'research'], known), ['code', 'research'], '多选应保留勾选顺序')
+  assert.deepEqual(normalizePacks(['code', 'code'], known), ['code'], '重复勾选应去重')
+  assert.deepEqual(normalizePacks(['code', 'nope'], known), ['code'], '未知包应被丢掉')
+  assert.deepEqual(normalizePacks(['everything', 'code'], known), ['everything'], '全部保留与其它包互斥')
+  assert.deepEqual(normalizePacks([], known), ['everything'], '一个都没选时回到全部保留')
+  assert.deepEqual(normalizePacks(null, known), ['everything'], '空值也应回到全部保留')
   const settings = normalizeSettings({ charsPerToken: 0, missFactor: 3, thresholdMultiplier: 0 })
   assert.equal(settings.charsPerToken, 1, '越界参数应被夹回区间')
   assert.equal(settings.missFactor, 1)
@@ -173,3 +182,40 @@ const packs = BUILTIN_PACKS.map((pack) => ({ ...pack, kind: 'builtin' }))
 }
 
 console.log('test-model: all assertions passed')
+
+// 4.6 方案差异：与现在比，关掉几个、恢复几个
+{
+  const before = new Map([
+    ['read', 'normal'],
+    ['ops_bash', 'hidden'],
+    ['never_used', 'normal'],
+  ])
+  const after = new Map([
+    ['read', 'normal'],
+    ['ops_bash', 'normal'],
+    ['never_used', 'hidden'],
+  ])
+  const diff = diffLevels(before, after)
+  assert.deepEqual(diff.hide, ['never_used'])
+  assert.deepEqual(diff.show, ['ops_bash'])
+  assert.equal(diff.same, false)
+  assert.equal(diffLevels(before, before).same, true)
+  assert.deepEqual(diffLevels(new Map(), new Map()), { hide: [], show: [], same: true })
+  console.log('ok 4.6 plan diff')
+}
+
+// 4.7 三档模式：auto / ask / off（pin 已并入 ask）
+{
+  assert.deepEqual(MODES, ['auto', 'ask', 'off'])
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-modes-'))
+  const store = new BudgetStore({ dir })
+  assert.equal(store.modeOf('any'), 'ask', '默认是 ask')
+  store.setPreferences({ mode: 'off' })
+  assert.equal(store.modeOf('any'), 'off', '全局偏好可设为不使用')
+  store.patchSession('s1', { mode: 'pin' })
+  assert.equal(store.modeOf('s1'), 'ask', '旧的 pin 设置迁移到 ask')
+  store.patchSession('s3', { mode: 'auto' })
+  assert.equal(store.modeOf('s3'), 'auto', '会话可覆盖全局模式')
+  assert.equal(store.modeOf('s2'), 'off', '其它会话仍用全局默认')
+  console.log('ok 4.7 modes')
+}
