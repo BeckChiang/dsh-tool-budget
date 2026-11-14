@@ -21,7 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { UsageIndex, decodeLog } from './lib/usage.js'
-import { BudgetStore, resolveLevels, planHash, protectionOf, profileFromSession, diffLevels, normalizePacks, CORE_ALWAYS, PROTECTED, LEVELS, MODES } from './lib/profiles.js'
+import { BudgetStore, resolveLevels, planHash, protectionOf, profileFromSession, diffLevels, normalizePacks, CORE_ALWAYS, PROTECTED, LEVELS, MODES, builtinSnapshot } from './lib/profiles.js'
 import { pluginOf, pluginLabel } from './lib/classify.js'
 import { estimate, normalizeSettings, toolChars, DEFAULT_SETTINGS } from './lib/cost.js'
 import { Learner, sessionAdjustments } from './lib/learning.js'
