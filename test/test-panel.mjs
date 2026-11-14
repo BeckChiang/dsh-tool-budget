@@ -313,8 +313,8 @@ assert.ok(orderedText.includes('+100token/轮'), `成本应显示净省数字，
 assert.ok(orderedText.includes('模式常驻20'), '成本应显示模式常驻开销')
 
 // 模式：名字加粗 + 每个模式一行说明
-const modeLabels = [...dom.window.document.querySelectorAll('[role="dialog"] span')].filter((node) => ['auto', 'ask', '不使用'].includes(node.textContent.trim()) && node.style.fontWeight === '700')
-assert.ok(modeLabels.length >= 3, '三个模式的名字都该加粗（含不使用）')
+const modeLabels = [...dom.window.document.querySelectorAll('[role="dialog"] span')].filter((node) => ['auto', 'ask', 'off'].includes(node.textContent.trim()) && node.style.fontWeight === '700')
+assert.ok(modeLabels.length >= 3, '三个模式的名字都该加粗（含 off）')
 assert.equal([...dom.window.document.querySelectorAll('[role="dialog"] span')].filter((node) => node.textContent.trim() === 'pin').length, 0, 'pin 模式应已并入 ask')
 assert.ok(orderedText.includes('工具关多了它会把需要的组再打开'), '模式说明应逐条显示')
 
@@ -507,15 +507,15 @@ assert.equal(firstPluginGroup().querySelectorAll('[data-tool]').length, pluginRo
 
 // 不使用：插件完全不生效，面板要说明清楚，成本归零
 assert.ok(orderedText.includes('插件完全不生效'), '不使用的说明要写清「完全不生效」')
-const offChip = [...dom.window.document.querySelectorAll('button')].find((node) => node.textContent.trim() === '不使用')
-assert.ok(offChip !== undefined, '模式里应有「不使用」')
+const offChip = [...dom.window.document.querySelectorAll('button')].find((node) => node.textContent.trim() === 'off')
+assert.ok(offChip !== undefined, '模式里应有「off」')
 offChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
 await flush(80)
 const modePost = posts.filter((item) => item.url.startsWith('/tool-budget/preferences') && item.body.mode !== undefined).at(-1)
 assert.equal(modePost.body.mode, 'off', '点不使用应把模式切到 off')
 assert.ok(dom.window.document.querySelector('[data-mode-off]') !== null, '不使用时应显示提示条')
-assert.ok(text().includes('插件不生效'), '提示条要说明插件不生效')
-assert.ok(dom.window.document.querySelector('[data-plan-apply]') === null, '不使用时不提示去应用方案')
+assert.ok(text().includes('插件完全不生效'), '提示条要说明插件完全不生效')
+assert.ok(dom.window.document.querySelector('[data-plan-apply-all]').disabled === true, '不使用时应禁用「应用这组」')
 assert.ok(!text().includes('−20'), '不使用时常驻为 0，不应出现负的净省')
 assert.ok(text().includes('近 30 天没调用'), '本轮学习条目应写明理由')
 

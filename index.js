@@ -412,6 +412,15 @@ export function apply(ctx, config) {
     }
   })
 
+  // 活会话的日志要等落盘才有 turn 记录；直接听 session/event 补上。
+  const liveTurns = new Map()
+  ctx.on('session/event', (session, event) => {
+    if (event?.type !== 'turn/start') return
+    const id = String(session?.id ?? '')
+    if (id === '') return
+    liveTurns.set(id, (liveTurns.get(id) ?? 0) + 1)
+  })
+
   let resyncTimer = null
   ctx.on('tools/change', () => {
     if (resyncTimer !== null) clearTimeout(resyncTimer)
@@ -527,7 +536,7 @@ export function apply(ctx, config) {
       warn(`counting turns failed (${sessionId})`, error)
     }
     turnsCache.set(sessionId, { turns, size: log.size, mtime: log.mtime })
-    return turns
+    return Math.max(turns, liveTurns.get(sessionId) ?? 0)
   }
 
   // --- 成本 ---------------------------------------------------------------
