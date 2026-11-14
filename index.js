@@ -642,6 +642,7 @@ export function apply(ctx, config) {
     if (plan === null) return { active: false, count: 0 }
     const base = resolveLevels({ session: { ...plan, profileId: 'full' }, catalog: catalog.tools, packs: store.packs() }).levels
     const diff = diffLevels(effectiveLevels(sessionId, base), levels)
+    const previewOnly = store.modeOf(sessionId) === 'off'
     const names = [...diff.hide, ...diff.show]
     const profile = key.startsWith('profile:') ? store.profile(key.slice('profile:'.length)) : null
     return {
@@ -652,6 +653,7 @@ export function apply(ctx, config) {
       show: diff.show.length,
       names: names.slice(0, 6),
       mutable: profile !== null && profile.kind !== 'builtin',
+      previewOnly: previewOnly === true,
     }
   }
 
@@ -663,7 +665,8 @@ export function apply(ctx, config) {
     const session = sessionOf(sessionId)
     const packs = store.packs()
     const { levels: storedLevels, activePacks } = levelsOf(sessionId, catalog)
-    const levels = effectiveLevels(sessionId, storedLevels)
+    // off 模式只是停用：面板仍显示「如果切回 ask 会是什么样」，方便先调好再启用。
+    const levels = store.modeOf(sessionId) === 'off' ? storedLevels : effectiveLevels(sessionId, storedLevels)
     const usage = usageCache.get(sessionId) ?? null
     const groups = new Map()
     const plugins = new Map()
@@ -1030,6 +1033,9 @@ export function apply(ctx, config) {
 
   function applyOp(sessionId, body) {
     const op = typeof body.op === 'string' ? body.op : 'level'
+    // off 模式只做预览：调级别可以，保存与应用一律等切回 ask。
+    const needsLive = op === 'saveDirty' || op === 'savePlan' || op === 'profile' || op === 'pack' || op === 'packSet' || op === 'planSet' || op === 'adopt'
+    if (needsLive && store.modeOf(sessionId) === 'off') return { ok: false, error: t('err.off') }
     if (op === 'level') {
       const name = typeof body.name === 'string' ? body.name : ''
       const level = LEVELS.includes(body.level) ? body.level : null
