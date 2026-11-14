@@ -941,7 +941,9 @@ export function apply(ctx, config) {
         removedNames: builtins.removed.slice(0, 5),
         deltas: builtins.deltas,
         impacts: builtins.impacts,
-        lastChange: builtins.changed ? { at: new Date().toISOString(), added: builtins.added.length, removed: builtins.removed.length } : builtins.lastChange,
+        lastChange: builtins.changed
+          ? { at: new Date().toISOString(), added: builtins.added.length, removed: builtins.removed.length, addedNames: builtins.added.slice(0, 8), removedNames: builtins.removed.slice(0, 8) }
+          : builtins.lastChange,
       },
       cost: costFor(sessionId, catalog, levels),
       updatedAt: new Date().toISOString(),
