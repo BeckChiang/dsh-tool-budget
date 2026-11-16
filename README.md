@@ -159,7 +159,7 @@ projected= 历史平均每轮 − saved + 常驻开销             # 切换后�
 
 ## 接口
 
-HTTP（仅回环）：
+HTTP（仅回环；每条路由入口先过 `ctx.connection.requestRejection`，Host / Origin 或浏览器凭据不符直接 401/403）：
 
 | 路由 | 方法 | 用途 |
 |---|---|---|
@@ -187,6 +187,7 @@ HTTP（仅回环）：
 ```bash
 node test/test-model.mjs      # 级别解析、方案、成本公式、聚类、插件分类、字典完整性
 node test/test-usage.mjs      # 日志解帧、次数统计、缓存增量
+node test/test-routes.mjs     # 路由准入：requestRejection 拒绝时直接 401/403、放行时照常
 DSH_APP=path/to/react-test/package.json node test/test-panel.mjs   # jsdom 挂载面板
 ```
 

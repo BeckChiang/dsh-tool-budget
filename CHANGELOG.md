@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- 安全：`/tool-budget/*` 挂在 `webServer.register` 上，那条通道不做 DSH 的 Host / Origin 准入，任意站点都能借浏览器把同源请求打进来。现在五个 handler 入口统一先过 `ctx.connection.requestRejection({ headers })`，被拒直接回 401/403 不再处理业务；拿不到 connection 服务或它抛错时失败关闭（503），与 dsh-free-search 的做法一致。
+- 新增 `test/test-routes.mjs`：拒绝时只回状态码、放行时照常 400、无 connection / 抛错时 503。
+
 ## 1.0.0
 
 首个稳定版。相对 0.3.x 的差异只是收口：面板重构完成、方案三来源（预设 / 保存 / 学习候选）与采用流程稳定、本会话学习与 30 天建议可用、内置方案改为规则化并显示重算状态、成本公式与五个参数固定下来、README 按 1.0 重写。

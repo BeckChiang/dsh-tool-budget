@@ -986,6 +986,35 @@ export function apply(ctx, config) {
     res.end(`${JSON.stringify({ ok: false, error: t('err.method', { method: 'unknown' }) })}\n`)
   }
 
+  /**
+   * Host / Origin 准入。
+   *
+   * 这些路由挂在 `webServer.register` 上，那条通道不做 DSH 的访问检查：任何站点
+   * 都能借用户的浏览器把同源请求打到 `/tool-budget/*` 上。所以每个 handler 入口
+   * 先过一遍 Connection 自己的判断（Host、Origin 与浏览器凭据），被拒就直接回
+   * 401/403，不再往下读会话数据。判断不了（没有 connection 服务或它抛错）时按
+   * 失败关闭处理：回 503，宁可面板暂时不可用，也不把会话数据暴露给任何来源。
+   */
+  function rejectUntrusted(req, res) {
+    let rejection
+    try {
+      const connection = ctx.get?.('connection')
+      if (connection === undefined || typeof connection.requestRejection !== 'function') {
+        warn('connection service unavailable; refused /tool-budget/* request')
+        send(res, 503, { ok: false, error: t('err.unavailable') })
+        return true
+      }
+      rejection = connection.requestRejection({ headers: req.headers })
+    } catch (error) {
+      warn('requestRejection failed; refused /tool-budget/* request', error)
+      send(res, 503, { ok: false, error: t('err.unavailable') })
+      return true
+    }
+    if (rejection === undefined) return false
+    send(res, rejection, { ok: false, error: t('err.trusted') })
+    return true
+  }
+
   // --- 目标解析与变更 ----------------------------------------------------
 
   /**
@@ -1323,6 +1352,7 @@ export function apply(ctx, config) {
   // --- 路由处理器 ---------------------------------------------------------
 
   const stateHandler = async (req, res) => {
+    if (rejectUntrusted(req, res)) return
     let url
     try {
       url = new URL(req.url ?? ROUTE, 'http://localhost')
@@ -1368,6 +1398,7 @@ export function apply(ctx, config) {
   }
 
   const usageHandler = async (req, res) => {
+    if (rejectUntrusted(req, res)) return
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       methodNotAllowed(res, 'GET, HEAD')
       return
@@ -1389,6 +1420,7 @@ export function apply(ctx, config) {
   }
 
   const costHandler = async (req, res) => {
+    if (rejectUntrusted(req, res)) return
     const url = new URL(req.url ?? COST_ROUTE, 'http://localhost')
     // POST 用来预览「换上勾选的方案之后」的成本：仍然按当前模式的常驻开销算，
     // 但省下的 token 与首轮重付都按目标级别重算。
@@ -1427,6 +1459,7 @@ export function apply(ctx, config) {
   }
 
   const learningHandler = async (req, res) => {
+    if (rejectUntrusted(req, res)) return
     if (req.method === 'GET' || req.method === 'HEAD') {
       send(res, 200, { ok: true, ...learner.status() })
       return
@@ -1460,6 +1493,7 @@ export function apply(ctx, config) {
   }
 
   const preferencesHandler = async (req, res) => {
+    if (rejectUntrusted(req, res)) return
     if (req.method !== 'POST') {
       methodNotAllowed(res, 'POST')
       return
